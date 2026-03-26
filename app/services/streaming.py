@@ -1,11 +1,12 @@
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 from app.config import settings
 from app.database import get_collection
 from app.services.embedding import create_embedding
 from app.services.rag import search_tool, search_documents
+import json
 
-client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
 
 async def stream_rag_response(user_message: str,conversation_history: list | None = None,websocket = None ):
     if conversation_history is None:
@@ -34,33 +35,53 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                 "type": "status",
                 "message": "Processing your question..."
             })
-        response = client.models.generate_content_stream(
+        
+        response = await client.chat.completions.create(
             model=settings.CHAT_MODEL,
-            contents=conversation_history,
-            config=types.GenerateContentConfig(
-                tools=[search_tool],
-                temperature=0.7,
-                system_instruction=system_instruction
-            )
-        )  
-        model_parts = []
+            messages=messages,
+            tools=[search_tool],
+            tool_choice="auto",
+            temperature=0.7,
+            stream=True
+        )
+        
         function_calls = []
-        full_answer=""
+        full_answer = ""
         used_rag = False
+        current_tool_call = None
+        tool_call_args = ""
+        
         for chunk in response:
-            if (chunk.candidates and chunk.candidates[0].content and 
-                chunk.candidates[0].content.parts):
-                for part in chunk.candidates[0].content.parts:
-                    model_parts.append(part)
-                    if hasattr(part, 'function_call') and part.function_call:
-                        function_calls.append(part.function_call)
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if not delta:
+                continue
             
-                if function_calls:
-                    break
-                if chunk.text:
-                    full_answer += chunk.text
+            # Check for tool calls
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    if tc.function and tc.function.name:
+                        current_tool_call = {
+                            "id": tc.id,
+                            "name": tc.function.name,
+                            "arguments": ""
+                        }
+                        tool_call_args = ""
+                    if tc.function and tc.function.arguments:
+                        tool_call_args += tc.function.arguments
+                        if current_tool_call:
+                            current_tool_call["arguments"] = tool_call_args
+            
+            # Check for content
+            if delta.content:
+                full_answer += delta.content
                 if websocket:
-                    await websocket.send_json({"type": "answer", "chunk": chunk.text})
+                    await websocket.send_json({"type": "answer", "chunk": delta.content})
+            
+            # Check finish reason
+            if chunk.choices[0].finish_reason == "tool_calls" and current_tool_call:
+                function_calls.append(current_tool_call)
+                current_tool_call = None
+                tool_call_args = ""
 
         answer = full_answer
         
@@ -73,45 +94,44 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                     "message": "🔍 Searching documents..."
                 })
 
-            conversation_history.append({
-                        "role": "model", 
-                        "parts": model_parts  
-                    })
-            function_responses = []
             for fc in function_calls:
-                if fc.name == "search_documents":
-                    query = fc.args.get("query", "")
+                if fc["name"] == "search_documents":
+                    args = json.loads(fc["arguments"]) if fc["arguments"] else {}
+                    query = args.get("query", "")
                     search_results = search_documents(query)
                 
-                    function_responses.append({
-                        "function_response": {
-                            "name": "search_documents",
-                            "response": {"result": search_results}
-                        }
+                    conversation_history.append({
+                        "role": "model",
+                        "parts": [{"function_call": {"name": fc["name"], "args": args}}]
+                    })
+                    conversation_history.append({
+                        "role": "user",
+                        "parts": [{"function_response": {"name": "search_documents", "response": {"result": search_results}}}]
                     })
 
-            conversation_history.append({
-                "role": "user",
-                
-                "parts": function_responses
-            })
             if websocket:
                 await websocket.send_json({
                     "type": "status",
                     "message": "✨ Generating answer..."
                 })
             
-            response_stream = client.models.generate_content_stream(model=settings.CHAT_MODEL,contents=conversation_history,config=types.GenerateContentConfig(temperature=0.7,system_instruction=system_instruction))
+            response_stream = await client.chat.completions.create(
+                model=settings.CHAT_MODEL,
+                messages=final_messages,
+                temperature=0.7,
+                stream=True
+            )
             
             full_answer = ""
             for chunk in response_stream:
-                if chunk.text:
-                    full_answer += chunk.text
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    full_answer += delta.content
                     
                     if websocket:
                         await websocket.send_json({
                             "type": "answer",
-                            "chunk": chunk.text
+                            "chunk": delta.content
                         })
             
             answer = full_answer

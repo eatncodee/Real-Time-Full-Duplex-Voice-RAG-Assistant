@@ -1,18 +1,18 @@
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from app.config import settings
 from app.database import get_collection
 from app.services.embedding import create_embedding,create_embeddings_batch
+import json
 
 
-client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 
-search_tool = types.Tool(
-    function_declarations=[
-        types.FunctionDeclaration(
-            name="search_documents",
-            description="""Search the internal knowledge base for specific factual information.
+search_tool = {
+    "type": "function",
+    "function": {
+        "name": "search_documents",
+        "description": """Search the internal knowledge base for specific factual information.
 
 USE this function ONLY when the user asks about:
 
@@ -75,21 +75,19 @@ Examples that DON'T need search:
 ❌ "What's the capital of France?"
 ❌ "Write a function to sort an array"
 ❌ "Hello, how are you?"
-❌ "Can you help me?"
-""",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "query": types.Schema(
-                        type=types.Type.STRING,
-                        description="The search query to find relevant documents"
-                    )
-                },
-                required=["query"]
-            )
-        )
-    ]
-)
+❌ "Can you help me?" """,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query to find relevant documents"
+                }
+            },
+            "required": ["query"]
+        }
+    }
+}
 
 
 def search_documents(question: str)-> str:
@@ -106,6 +104,46 @@ def search_documents(question: str)-> str:
             docs=results['documents'][0]
             return "\n\n".join(docs)
     return "No relevant docs found"
+
+
+def _build_openai_messages(conversation_history: list, system_instruction: str) -> list:
+    """Convert conversation history to OpenAI message format."""
+    messages = [{"role": "system", "content": system_instruction}]
+    for entry in conversation_history:
+        role = entry["role"]
+        if role == "model":
+            role = "assistant"
+        
+        parts = entry.get("parts", [])
+        for part in parts:
+            if isinstance(part, dict):
+                if "text" in part:
+                    messages.append({"role": role, "content": part["text"]})
+                elif "function_call" in part:
+                    fc = part["function_call"]
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": f"call_{fc['name']}",
+                            "type": "function",
+                            "function": {
+                                "name": fc["name"],
+                                "arguments": json.dumps(fc.get("args", {}))
+                            }
+                        }]
+                    })
+                elif "function_response" in part:
+                    fr = part["function_response"]
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": f"call_{fr['name']}",
+                        "content": json.dumps(fr["response"])
+                    })
+            elif isinstance(part, str):
+                messages.append({"role": role, "content": part})
+    return messages
+
 
 def chat_with_function_calling(user_message: str, conversation_history:list | None = None,temprature: float=0.7) -> dict:
     if conversation_history is None:
@@ -133,31 +171,41 @@ Good: "Yes, Rudraksh is at an excellent learning pace for a 6th semester student
 RULE: Answer directly if it's general knowledge. Only search for specific document/company info.
 """
     try:
-        response = client.models.generate_content(model=settings.CHAT_MODEL,contents=conversation_history,config=types.GenerateContentConfig(tools=[search_tool],temperature=temprature,system_instruction=system_instruction))
+        messages = _build_openai_messages(conversation_history, system_instruction)
+        
+        response = client.chat.completions.create(
+            model=settings.CHAT_MODEL,
+            messages=messages,
+            tools=[search_tool],
+            tool_choice="auto",
+            temperature=temprature
+        )
 
-        function_calls = []
-
-        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if part.function_call:
-                    function_calls.append(part.function_call)
-
-
-        if function_calls:
+        choice = response.choices[0]
+        
+        if choice.message.tool_calls:
+            function_calls = choice.message.tool_calls
+            
             for fc in function_calls:
-                if fc.name == "search_documents":
-                    query = fc.args.get("query","")
+                if fc.function.name == "search_documents":
+                    query = json.loads(fc.function.arguments).get("query", "")
                     search_results = search_documents(query)
-                    conversation_history.append({"role": "model","parts": [{"function_call": fc}]})
+                    
+                    conversation_history.append({"role": "model","parts": [{"function_call": {"name": fc.function.name, "args": json.loads(fc.function.arguments)}}]})
                     conversation_history.append({"role": "user","parts": [{"function_response": {"name": "search_documents","response": {"result": search_results}}}]}) 
 
-            final_response = client.models.generate_content(model=settings.CHAT_MODEL,contents=conversation_history,config=types.GenerateContentConfig(temperature=temprature,system_instruction=system_instruction))
+            final_messages = _build_openai_messages(conversation_history, system_instruction)
+            final_response = client.chat.completions.create(
+                model=settings.CHAT_MODEL,
+                messages=final_messages,
+                temperature=temprature
+            )
             
-            answer = final_response.text
+            answer = final_response.choices[0].message.content
             used_rag = True
         
         else:
-            answer = response.text
+            answer = choice.message.content
             used_rag = False
         
         conversation_history.append({"role": "model","parts": [{"text":answer}]})
@@ -194,8 +242,11 @@ def generate_answer(question :str ,context_docs: str):
             - Keep the answer concise and direct
 
             Answer:"""
-    response = client.models.generate_content(model=settings.CHAT_MODEL,contents=prompt)
-    return response.text
+    response = client.chat.completions.create(
+        model=settings.CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
 
 
 def ask_question(question: str, n_results: int = 3) -> dict:
@@ -213,4 +264,3 @@ def ask_question(question: str, n_results: int = 3) -> dict:
         'question': question,
         'answer': answer,
     }
-        
