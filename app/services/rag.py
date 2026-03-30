@@ -1,11 +1,11 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
 from app.config import settings
 from app.database import get_collection
 from app.services.embedding import create_embedding,create_embeddings_batch
 import json
+import asyncio
 
-
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 
 search_tool = {
@@ -145,7 +145,7 @@ def _build_openai_messages(conversation_history: list, system_instruction: str) 
     return messages
 
 
-def chat_with_function_calling(user_message: str, conversation_history:list | None = None,temprature: float=0.7) -> dict:
+async def chat_with_function_calling(user_message: str, conversation_history:list | None = None,temprature: float=0.7) -> dict:
     if conversation_history is None:
         conversation_history = []
     conversation_history.append({"role": "user","parts": [{"text":user_message}]})   
@@ -173,7 +173,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
     try:
         messages = _build_openai_messages(conversation_history, system_instruction)
         
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=settings.CHAT_MODEL,
             messages=messages,
             tools=[search_tool],
@@ -189,13 +189,13 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
             for fc in function_calls:
                 if fc.function.name == "search_documents":
                     query = json.loads(fc.function.arguments).get("query", "")
-                    search_results = search_documents(query)
+                    search_results = await asyncio.to_thread(search_documents, query)
                     
                     conversation_history.append({"role": "model","parts": [{"function_call": {"name": fc.function.name, "args": json.loads(fc.function.arguments)}}]})
                     conversation_history.append({"role": "user","parts": [{"function_response": {"name": "search_documents","response": {"result": search_results}}}]}) 
 
             final_messages = _build_openai_messages(conversation_history, system_instruction)
-            final_response = client.chat.completions.create(
+            final_response = await client.chat.completions.create(
                 model=settings.CHAT_MODEL,
                 messages=final_messages,
                 temperature=temprature
@@ -217,8 +217,11 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
             "temprature":temprature
         }
     except Exception as e:
+        import traceback
+        print(f"❌ RAG error: {e}")
+        traceback.print_exc()
         error_message = f"I encountered an error: {str(e)}"
-        
+
         conversation_history.append({
             "role": "model",
             "parts": [{"text": error_message}]

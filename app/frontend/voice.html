@@ -5,297 +5,256 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Chat</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
+            height: 100vh; display: flex; justify-content: center;
+            align-items: center; padding: 20px;
         }
-
         .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            max-width: 500px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
+            background: white; border-radius: 20px; padding: 40px;
+            max-width: 500px; width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center;
         }
-
-        h1 {
-            color: #667eea;
-            margin-bottom: 30px;
-        }
-
-        .status {
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-
-        .status.disconnected {
-            background: #ffe0e0;
-            color: #cc0000;
-        }
-
-        .status.connected {
-            background: #e0ffe0;
-            color: #00aa00;
-        }
-
-        .status.listening {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .status.processing {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-
+        h1 { color: #667eea; margin-bottom: 30px; }
+        .status { padding: 15px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; }
+        .status.disconnected { background: #ffe0e0; color: #cc0000; }
+        .status.connected    { background: #e0ffe0; color: #00aa00; }
+        .status.listening    { background: #fff3cd; color: #856404; }
+        .status.processing   { background: #d1ecf1; color: #0c5460; }
         #recordButton {
-            width: 150px;
-            height: 150px;
-            border-radius: 50%;
-            border: none;
-            font-size: 60px;
-            cursor: pointer;
-            transition: all 0.3s;
-            margin: 20px 0;
+            width: 150px; height: 150px; border-radius: 50%;
+            border: none; font-size: 60px; cursor: pointer;
+            transition: all 0.3s; margin: 20px 0;
         }
-
-        #recordButton:not(.listening) {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-
-        #recordButton.listening {
-            background: #ff4444;
-            animation: pulse 1.5s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-        }
-
-        #recordButton:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .transcript {
-            margin: 20px 0;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 10px;
-            min-height: 60px;
-            font-style: italic;
-            color: #666;
-        }
-
-        .transcript.active {
-            color: #333;
-            font-style: normal;
-        }
-
-        .error {
-            color: #cc0000;
-            margin: 10px 0;
-            font-size: 14px;
-        }
+        #recordButton:not(.listening) { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        #recordButton.listening { background: #ff4444; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+        #recordButton:disabled { opacity: 0.5; cursor: not-allowed; }
+        .transcript { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 10px; min-height: 60px; font-style: italic; color: #666; }
+        .error { color: #cc0000; margin: 10px 0; font-size: 14px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎤 Voice Chat</h1>
-        
-        <div id="status" class="status disconnected">
-            Disconnected
-        </div>
+<div class="container">
+    <h1>🎤 Voice Chat</h1>
+    <div id="status" class="status disconnected">Disconnected</div>
+    <button id="recordButton" disabled>🎤</button>
+    <div class="transcript" id="transcript">Click the microphone to speak...</div>
+    <div id="error" class="error"></div>
+</div>
+<script>
+// ── Playback config (Cartesia: pcm_f32le 44100Hz) ─────────────────────────────
+const PLAYBACK_SAMPLE_RATE = 44100;
+const BYTES_PER_SAMPLE     = 4;     // float32 = 4 bytes
+const NUM_CHANNELS         = 1;
+const SCHEDULE_AHEAD       = 0.1;   // 100ms look-ahead
 
-        <button id="recordButton" disabled>
-            🎤
-        </button>
+// ── Recording config (Sarvam STT + VAD: 16kHz 16-bit PCM) ────────────────────
+const RECORD_SAMPLE_RATE   = 16000;
 
-        <div class="transcript" id="transcript">
-            Click the microphone to speak...
-        </div>
+// ── Playback state ────────────────────────────────────────────────────────────
+let audioCtx      = null;
+let nextStartTime = 0;
+let activeSources = [];
 
-        <div id="error" class="error"></div>
-    </div>
-    <script>
-        let ws = null;
-let recognition = null;
-
-// Audio queue system
-let audioQueue = [];
-let isPlaying = false;
-
-const recordButton = document.getElementById('recordButton');
-const statusDiv = document.getElementById('status');
-const transcriptDiv = document.getElementById('transcript');
-const errorDiv = document.getElementById('error');
-
-// User ID
-function generateUserId() {
-    return 'user_' + Math.random().toString(36).substr(2, 9);
+function getAudioContext() {
+    if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        nextStartTime = 0;
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
 }
+
+function pcmToAudioBuffer(ctx, rawBuffer) {
+    const samples = Math.floor(rawBuffer.byteLength / BYTES_PER_SAMPLE);
+    if (samples === 0) return null;
+    const audioBuffer = ctx.createBuffer(NUM_CHANNELS, samples, PLAYBACK_SAMPLE_RATE);
+    const channelData = audioBuffer.getChannelData(0);
+    const view = new DataView(rawBuffer);
+    for (let i = 0; i < samples; i++) {
+        channelData[i] = view.getFloat32(i * 4, true);
+    }
+    return audioBuffer;
+}
+
+function scheduleChunk(rawBuffer) {
+    const ctx         = getAudioContext();
+    const audioBuffer = pcmToAudioBuffer(ctx, rawBuffer);
+    if (!audioBuffer) return;
+
+    if (nextStartTime < ctx.currentTime) {
+        nextStartTime = ctx.currentTime + SCHEDULE_AHEAD;
+    }
+
+    const source  = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+
+    const startAt = Math.max(ctx.currentTime + SCHEDULE_AHEAD, nextStartTime);
+    source.start(startAt);
+    nextStartTime = startAt + audioBuffer.duration;
+
+    activeSources.push(source);
+    source.onended = () => {
+        activeSources = activeSources.filter(s => s !== source);
+        if (activeSources.length === 0 && nextStartTime <= ctx.currentTime + SCHEDULE_AHEAD) {
+            updateStatus('connected', '✅ Ready – Click mic to speak again');
+            recordButton.disabled = false;
+        }
+    };
+}
+
+function stopAudio() {
+    activeSources.forEach(s => { try { s.stop(); } catch(_) {} });
+    activeSources = [];
+    nextStartTime = 0;
+}
+
+// ── Recording state ───────────────────────────────────────────────────────────
+let micStream   = null;
+let micContext  = null;
+let scriptNode  = null;
+let isRecording = false;
+
+async function startRecording() {
+    if (isRecording) return;
+
+    // Ask browser for 16kHz mono — matches Sarvam STT + VAD requirements
+    micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            sampleRate: RECORD_SAMPLE_RATE,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+        }
+    });
+
+    // Separate AudioContext for recording — never mix with playback context
+    micContext = new AudioContext({ sampleRate: RECORD_SAMPLE_RATE });
+
+    const source = micContext.createMediaStreamSource(micStream);
+    // 4096 samples @ 16kHz ≈ 256ms per callback — good chunk size for VAD
+    scriptNode   = micContext.createScriptProcessor(4096, 1, 1);
+
+    scriptNode.onaudioprocess = (e) => {
+        if (!isRecording) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        const float32 = e.inputBuffer.getChannelData(0);
+
+        // Float32 → Int16 conversion
+        // Backend VAD: np.frombuffer(chunk, dtype=np.int16) ← needs Int16
+        // Sarvam STT:  wf.setsampwidth(2) ← needs 16-bit (2 bytes per sample)
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+
+        ws.send(int16.buffer);  // raw bytes → backend message["bytes"]
+    };
+
+    source.connect(scriptNode);
+    scriptNode.connect(micContext.destination); // must connect to fire onaudioprocess
+    isRecording = true;
+}
+
+function stopRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+    if (scriptNode)  { scriptNode.disconnect(); scriptNode = null; }
+    if (micStream)   { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if (micContext)  { micContext.close(); micContext = null; }
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+let ws = null;
+
+const recordButton  = document.getElementById('recordButton');
+const statusDiv     = document.getElementById('status');
+const transcriptDiv = document.getElementById('transcript');
+const errorDiv      = document.getElementById('error');
+
+function generateUserId() { return 'user_' + Math.random().toString(36).substr(2, 9); }
 const userId = sessionStorage.getItem('userId') || generateUserId();
 sessionStorage.setItem('userId', userId);
 
-// Play next audio in queue
-function playNext() {
-    // Queue empty → stop playing
-    if (audioQueue.length === 0) {
-        isPlaying = false;
-        updateStatus('connected', '✅ Ready - Click mic to speak again');
-        return;
-    }
-
-    isPlaying = true;
-
-    // Get next chunk
-    const audioUrl = audioQueue.shift();
-    const audio = new Audio(audioUrl);
-
-    audio.play();
-
-    // When done → play next chunk
-    audio.onended = () => {
-        playNext();
-    };
-
-    // Handle errors
-    audio.onerror = () => {
-        console.error('Audio play error');
-        playNext();  // Skip broken chunk, play next
-    };
-}
-
-// WebSocket connection
 function connect() {
     ws = new WebSocket(`ws://localhost:8000/ws/voice/${userId}`);
+    ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
-        console.log('✅ Connected');
-        updateStatus('connected', '✅ Connected - Click mic to speak');
+        updateStatus('connected', '✅ Connected – Click mic to speak');
         recordButton.disabled = false;
     };
 
-    ws.onmessage = async (event) => {
-        console.log('📥 Received audio chunk');
+    ws.onmessage = (event) => {
+        if (typeof event.data === 'string') return;  // ignore text frames
+        const chunk = event.data;
+        if (!chunk || chunk.byteLength === 0) return;
+        console.log(`📥 PCM chunk: ${chunk.byteLength} bytes`);
 
-        // Create URL from received audio
-        const audioBlob = event.data;
-        const audioUrl = URL.createObjectURL(audioBlob);
-
-        // Add to queue
-        audioQueue.push(audioUrl);
-        console.log(`Queue size: ${audioQueue.length}`);
-
-        // Start playing if not already playing
-        if (!isPlaying) {
-            updateStatus('processing', '🔊 Playing response...');
-            playNext();
+        // Backend VAD fired and first audio is arriving —
+        // auto-stop recording so mic doesn't pick up the speaker
+        if (isRecording) {
+            stopRecording();
+            recordButton.classList.remove('listening');
         }
+
+        if (activeSources.length === 0) {
+            updateStatus('processing', '🔊 Playing response…');
+            recordButton.disabled = true;  // disable while playing
+        }
+
+        getAudioContext();
+        scheduleChunk(chunk);
     };
 
     ws.onclose = () => {
-        console.log('❌ Disconnected');
         updateStatus('disconnected', '❌ Disconnected');
         recordButton.disabled = true;
-        
-        // Clear queue on disconnect
-        audioQueue = [];
-        isPlaying = false;
-        
+        stopAudio();
+        stopRecording();
         setTimeout(connect, 3000);
     };
 
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        errorDiv.textContent = '⚠️ Connection error';
-    };
+    ws.onerror = () => { errorDiv.textContent = '⚠️ Connection error'; };
 }
 
-// Speech recognition
-function checkSpeechRecognition() {
-    if (!('webkitSpeechRecognition' in window)) {
-        errorDiv.textContent = '❌ Use Chrome or Edge';
-        return false;
-    }
-    return true;
-}
+// ── Button: press to start, VAD stops automatically ──────────────────────────
+recordButton.addEventListener('click', async () => {
+    errorDiv.textContent = '';
+    getAudioContext();  // must be inside a user gesture
 
-function initSpeechRecognition() {
-    recognition = new webkitSpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onstart = () => {
-        updateStatus('listening', '🎤 Listening... Speak now!');
-        recordButton.classList.add('listening');
-        transcriptDiv.textContent = 'Listening...';
-        
-        // Clear old queue when user speaks again
-        audioQueue = [];
-        isPlaying = false;
-    };
-
-    recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        console.log('📝 Transcript:', transcript);
-        transcriptDiv.textContent = `You: "${transcript}"`;
-        sendText(transcript);
-    };
-
-    recognition.onerror = (event) => {
-        console.error('Speech error:', event.error);
-        errorDiv.textContent = `Error: ${event.error}`;
-        updateStatus('connected', '✅ Ready');
+    if (isRecording) {
+        // Manual stop — user changed their mind
+        stopRecording();
         recordButton.classList.remove('listening');
-    };
-
-    recognition.onend = () => {
-        recordButton.classList.remove('listening');
-    };
-}
-
-function sendText(text) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        errorDiv.textContent = 'Not connected';
-        return;
+        updateStatus('connected', '✅ Ready – Click mic to speak');
+    } else {
+        // Start recording
+        stopAudio();  // cut off any still-playing response
+        try {
+            await startRecording();
+            recordButton.classList.add('listening');
+            updateStatus('listening', '🎤 Listening… Speak now!');
+            transcriptDiv.textContent = 'Listening…';
+        } catch (err) {
+            errorDiv.textContent = `Mic error: ${err.message}`;
+            console.error(err);
+        }
     }
-
-    updateStatus('processing', '🤖 Processing...');
-    ws.send(JSON.stringify({ text: text }));
-}
+});
 
 function updateStatus(type, message) {
-    statusDiv.className = `status ${type}`;
+    statusDiv.className   = `status ${type}`;
     statusDiv.textContent = message;
 }
 
-recordButton.addEventListener('click', () => {
-    errorDiv.textContent = '';
-    recognition.start();
-});
-
-if (checkSpeechRecognition()) {
-    initSpeechRecognition();
-    connect();
-}
-    </script>
+connect();
+</script>
 </body>
 </html>

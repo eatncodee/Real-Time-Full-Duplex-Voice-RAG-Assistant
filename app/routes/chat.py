@@ -32,7 +32,7 @@ async def ask(q: Question):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(msg: ChatMessage):
     try:
-        result = chat_with_function_calling(msg.message,msg.conversation_history,msg.temprature)
+        result = await chat_with_function_calling(msg.message,msg.conversation_history,msg.temprature)
         return result
     
     except Exception as e:
