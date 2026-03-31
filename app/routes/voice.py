@@ -53,26 +53,6 @@ class SilenceDetector:
 
     
 
-def clean_text_for_tts(text):
-    text = re.sub(r'\*+', '', text)      # Bold/Italic
-    text = re.sub(r'_+', '', text)       # Underline/Italic
-    text = re.sub(r'#+\s?', '', text)    # Headers
-    text = re.sub(r'`+', '', text)       # Code blocks
-    
-    # 2. Remove List Markers (the starts of lines)
-    text = re.sub(r'^\s*[-+*]\s+', '', text, flags=re.MULTILINE)
-    
-    # 3. 🟢 PROD ADDITION: Remove URLs (AI loves to yap links)
-    text = re.sub(r'http[s]?://\S+', '', text)
-    
-    # 4. 🟢 PROD ADDITION: Remove LaTeX/Math symbols if they appear
-    text = re.sub(r'\\\(|\\\)|\\\[|\\\]', '', text)
-    
-    # 5. Clean up whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-
 async def speech_to_text(audio_bytes:bytes) ->dict:
     wav_buffer = io.BytesIO()
     with wave.open(wav_buffer, 'wb') as wf:
@@ -210,6 +190,23 @@ async def voice_chat(websocket: WebSocket,userId:str):
         print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
+
+
+def clean_text_for_tts(text):
+    text = re.sub(r'\*+', '', text)      # Bold/Italic
+    text = re.sub(r'_+', '', text)       # Underline/Italic
+    text = re.sub(r'#+\s?', '', text)    # Headers
+    text = re.sub(r'`+', '', text)       # Code blocks
+    
+    # 2. Remove List Markers (the starts of lines)
+    text = re.sub(r'^\s*[-+*]\s+', '', text, flags=re.MULTILINE)
+    # 3. 🟢 PROD ADDITION: Remove URLs (AI loves to yap links)
+    text = re.sub(r'http[s]?://\S+', '', text)
+    # 4. 🟢 PROD ADDITION: Remove LaTeX/Math symbols if they appear
+    text = re.sub(r'\\\(|\\\)|\\\[|\\\]', '', text)
+    # 5. Clean up whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
 async def cartesia_tts_worker(sentence_queue: asyncio.Queue, websocket):
