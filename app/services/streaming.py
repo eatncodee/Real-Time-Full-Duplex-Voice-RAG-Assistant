@@ -4,18 +4,14 @@ from app.database import get_collection
 from app.services.embedding import create_embedding
 from app.services.rag import search_tool, search_documents
 import json
+import asyncio
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 
-async def stream_rag_response(user_message: str,conversation_history: list | None = None,websocket = None ):
+async def stream_rag_response(user_message: str,conversation_history: list | None = None,websocket = None , text_chunk_callback= None):
     if conversation_history is None:
         conversation_history = []
-    
-    conversation_history.append({
-        "role": "user",
-        "parts": [{"text": user_message}]
-    })
     
     system_instruction = """You are a helpful AI assistant with access to a company knowledge base.
 IMPORTANT: You have TWO capabilities:
@@ -29,6 +25,12 @@ IMPORTANT: You have TWO capabilities:
    ✓ Document content
 RULE: Answer directly if it's general knowledge. Only search for specific document/company info.
 """
+    conversation_history.append({
+        "role": "user",
+        "content": user_message
+    })
+    openai_messages = [{"role": "system", "content": system_instruction}] + conversation_history
+
     try:
         if websocket:
             await websocket.send_json({
@@ -38,7 +40,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
         
         response = await client.chat.completions.create(
             model=settings.CHAT_MODEL,
-            messages=messages,
+            messages=openai_messages,
             tools=[search_tool],
             tool_choice="auto",
             temperature=0.7,
@@ -51,12 +53,11 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
         current_tool_call = None
         tool_call_args = ""
         
-        for chunk in response:
+        async for chunk in response:
             delta = chunk.choices[0].delta if chunk.choices else None
             if not delta:
                 continue
-            
-            # Check for tool calls
+
             if delta.tool_calls:
                 for tc in delta.tool_calls:
                     if tc.function and tc.function.name:
@@ -71,11 +72,13 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                         if current_tool_call:
                             current_tool_call["arguments"] = tool_call_args
             
-            # Check for content
             if delta.content:
                 full_answer += delta.content
                 if websocket:
                     await websocket.send_json({"type": "answer", "chunk": delta.content})
+                if text_chunk_callback:
+                    await text_chunk_callback(delta.content)
+
             
             # Check finish reason
             if chunk.choices[0].finish_reason == "tool_calls" and current_tool_call:
@@ -98,15 +101,15 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                 if fc["name"] == "search_documents":
                     args = json.loads(fc["arguments"]) if fc["arguments"] else {}
                     query = args.get("query", "")
-                    search_results = search_documents(query)
+                    search_results = await asyncio.to_thread(search_documents, query)
                 
                     conversation_history.append({
-                        "role": "model",
-                        "parts": [{"function_call": {"name": fc["name"], "args": args}}]
+                        "role": "assistant",
+                        "content": f"I searched the knowledge base for '{query}'."
                     })
                     conversation_history.append({
-                        "role": "user",
-                        "parts": [{"function_response": {"name": "search_documents", "response": {"result": search_results}}}]
+                        "role": "system",
+                        "content": f"Search Results: {search_results}"
                     })
 
             if websocket:
@@ -114,7 +117,8 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                     "type": "status",
                     "message": "✨ Generating answer..."
                 })
-            
+            final_messages = [{"role": "system", "content": system_instruction}] + conversation_history
+
             response_stream = await client.chat.completions.create(
                 model=settings.CHAT_MODEL,
                 messages=final_messages,
@@ -123,7 +127,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
             )
             
             full_answer = ""
-            for chunk in response_stream:
+            async for chunk in response_stream:
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if delta and delta.content:
                     full_answer += delta.content
@@ -133,12 +137,14 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                             "type": "answer",
                             "chunk": delta.content
                         })
+                    if text_chunk_callback:
+                        await text_chunk_callback(delta.content)
             
             answer = full_answer
         
         conversation_history.append({
-            "role": "model",
-            "parts": [{"text": answer}]
+            "role": "assistant",
+            "content": answer
         })
         
         if websocket:
