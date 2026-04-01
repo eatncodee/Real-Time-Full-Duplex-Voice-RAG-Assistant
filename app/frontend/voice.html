@@ -13,8 +13,8 @@
             align-items: center; padding: 20px;
         }
         .container {
-            background: white; border-radius: 20px; padding: 40px;
-            max-width: 500px; width: 100%;
+            background: white; border-radius: 40px; padding: 50px;
+            max-width: 500px; width: 110%;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center;
         }
         h1 { color: #667eea; margin-bottom: 30px; }
@@ -38,7 +38,7 @@
 </head>
 <body>
 <div class="container">
-    <h1>🎤 Voice Chat</h1>
+    <h1>Generative AI Assistant🎤</h1>
     <div id="status" class="status disconnected">Disconnected</div>
     <button id="recordButton" disabled>🎤</button>
     <div class="transcript" id="transcript">Click the microphone to speak...</div>
@@ -192,57 +192,65 @@ function connect() {
     };
 
     ws.onmessage = (event) => {
-        // 🟢 HANDLE STATUS UPDATES (Strings/JSON)
-        if (typeof event.data === 'string') {
-            try {
-                const message = JSON.parse(event.data);
-                
-                // Update the Status Bar based on backend "type"
-                if (message.type === 'status') {
-                    const statusClass = message.message.includes('Searching') ? 'processing' : 'connected';
+    // 🟢 HANDLE STATUS UPDATES (Strings/JSON)
+    if (typeof event.data === 'string') {
+        try {
+            const message = JSON.parse(event.data);
+            
+            if (message.type === 'status') {
+                const statusClass = (message.message.includes('Searching') || message.message.includes('Processing')) 
+                    ? 'processing' : 'connected';                
                     updateStatus(statusClass, message.message);
-                }
-                
-                // Update the Transcript area if the backend sends an answer chunk
-                if (message.type === 'answer') {
-                    if (transcriptDiv.textContent === 'Listening...') {
-                        transcriptDiv.textContent = '';
-                        transcriptDiv.style.fontStyle = 'normal'; // Optional: make it look like a real answer
-                        transcriptDiv.style.color = '#000';      // Optional: change from gray to black
+
+                // ⚡ FIX: Detect silence signal from backend and reset button IMMEDIATELY
+                if (message.message.includes('Processing') || message.message.includes('🤫')) {
+                    if (isRecording) {
+                        stopRecording();
+                        recordButton.classList.remove('listening');
+                        recordButton.disabled = false;
+                        transcriptDiv.textContent = 'Thinking...';
                     }
-                    
-                    transcriptDiv.textContent += message.chunk;
                 }
-                
-                // If backend says 'done', reset the UI
-                if (message.type === 'done') {
-                    updateStatus('connected', '✅ Ready');
-                    recordButton.disabled = false;
-                }
-            } catch (e) {
-                console.log("Plain string received:", event.data);
             }
-            return;
+            
+            if (message.type === 'answer') {
+                if (transcriptDiv.textContent === 'Listening...' || transcriptDiv.textContent === 'Thinking...') {
+                    transcriptDiv.textContent = '';
+                    transcriptDiv.style.fontStyle = 'normal';
+                    transcriptDiv.style.color = '#000';
+                }
+                transcriptDiv.textContent += message.chunk;
+            }
+            
+            if (message.type === 'done') {
+                updateStatus('connected', '✅ Ready');
+                recordButton.disabled = false;
+            }
+        } catch (e) {
+            console.log("Plain string received:", event.data);
         }
+        return;
+    }
 
-        // 🔵 HANDLE AUDIO (Binary)
-        const chunk = event.data;
-        if (!chunk || chunk.byteLength === 0) return;
+    // 🔵 HANDLE AUDIO (Binary)
+    const chunk = event.data;
+    if (!chunk || chunk.byteLength === 0) return;
 
-        // Auto-stop recording so the mic doesn't "hear" the speakers
-        if (isRecording) {
-            stopRecording();
-            recordButton.classList.remove('listening');
-        }
+    // Safety check: mic should already be off from the JSON signal, 
+    // but if it's still on, kill it now.
+    if (isRecording) {
+        stopRecording();
+        recordButton.classList.remove('listening');
+    }
 
-        if (activeSources.length === 0) {
-            updateStatus('processing', '🔊 Playing response…');
-            recordButton.disabled = false;
-        }
+    if (activeSources.length === 0) {
+        updateStatus('processing', '🔊 Playing response…');
+        recordButton.disabled = false;
+    }
 
-        getAudioContext();
-        scheduleChunk(chunk);
-    };
+    getAudioContext();
+    scheduleChunk(chunk);
+};
 
     ws.onclose = () => {
         updateStatus('disconnected', '❌ Disconnected');

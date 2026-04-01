@@ -25,10 +25,6 @@ IMPORTANT: You have TWO capabilities:
    ✓ Document content
 RULE: Answer directly if it's general knowledge. Only search for specific document/company info.
 """
-    conversation_history.append({
-        "role": "user",
-        "content": user_message
-    })
     openai_messages = [{"role": "system", "content": system_instruction}] + conversation_history
 
     try:

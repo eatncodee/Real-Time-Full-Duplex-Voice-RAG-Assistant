@@ -27,7 +27,6 @@ app.include_router(voice.router)
 async def startup_event():
     print("🔥 Warming up Vector Database and Embedding Models...")
     try:
-        # Run a fake query to force the models to load into memory
         await asyncio.to_thread(search_documents, "initialization test")
         print("✅ Database warmed up and ready!")
     except Exception as e:
