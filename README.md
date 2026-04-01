@@ -12,7 +12,7 @@ They follow a rigid loop — listen → think → speak → repeat. You have to 
 This system runs all three in parallel. While the AI is speaking, it is already listening. Interrupt it mid-sentence and it immediately drops what it was saying, processes your new input, and responds — like a real conversation.
 
 ---
-![Project Demo](app/demo/gif_demo.gif)
+![Project Demo](app/demo/GIF_demo.gif)
 
 
 ## ✨ Key Features
