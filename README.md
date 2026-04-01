@@ -113,12 +113,28 @@ async for audio_chunk in text_to_speech(response):
 
 ```
 ├── app/
+│   ├── demo/
+│   │   ├── GIF_demo.gif      # High-speed barge-in preview
+│   │   └── Video.mp4         # Raw demo recording
+│   ├── frontend/
+│   │   ├── chat.html         # Standard chat interface
+│   │   └── voice.html        # Voice-enabled Web Audio interface
 │   ├── routes/
-│   │   ├── voice.py        # WebSocket, VAD, STT, TTS pipeline
-│   │   ├── documents.py    # PDF upload and ingestion
-│   │   └── chat.py         # REST endpoints
+│   │   ├── chat.py           # REST endpoints
+│   │   ├── documents.py      # PDF upload & ingestion logic
+│   │   └── voice.py          # WebSocket & VAD pipeline
 │   └── services/
-│       ├── rag.py          # GPT-4o-mini + tool calling
-│       └── embedding.py    # Embeddings + ChromaDB
-└── voice_chat.html         # Browser client (Web Audio API)
-```
+│       ├── rag.py            # GPT-4o-mini + Tool calling logic
+│       ├── streaming.py      # Async stream handlers
+│       ├── embedding.py      # OpenAI text-embedding-3-small
+│       └── database.py       # ChromaDB connection & management
+├── audio/
+│   ├── audio_convert.py      # Sample rate & format conversion
+│   ├── audio_play.py         # Local playback utilities
+│   └── record_audio.py       # CLI recording for testing
+├── chroma_db/                # Local vector store persistence
+├── .env                      # API Keys (OpenAI, Sarvam, Cartesia)
+├── requirements.txt          # Project dependencies
+└── README.md                 # Project documentation
+
+---
