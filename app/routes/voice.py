@@ -1,12 +1,11 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.streaming import stream_rag_response
+from app.services.VAD import SilenceDetector
 import io,wave
 import re
 import httpx
 import os
-import numpy as np
 import asyncio
-import time
 from fastapi import UploadFile, File
 from cartesia import AsyncCartesia
 from sarvamai import AsyncSarvamAI
@@ -20,38 +19,6 @@ router=APIRouter()
 client=AsyncCartesia(api_key=os.getenv("Cartesia_key"),)
 sarvam_client=AsyncSarvamAI(api_subscription_key=os.getenv("Sarvam_key"))
 
-class SilenceDetector:
-    def __init__(self, threshold=700, silence_duration=0.4):
-        self.threshold = threshold          # Min volume to count as "speech"
-        self.silence_duration = silence_duration  # Seconds of silence to trigger stop
-        self.silence_start_time = None
-        self.has_spoken = False             # Ensures we don't trigger on initial silence
-    def is_user_finished(self, audio_chunk_bytes):
-        # 1. Convert bytes to Int16 (Frontend MUST send 16-bit PCM)
-        audio_data = np.frombuffer(audio_chunk_bytes, dtype=np.int16)
-
-        if len(audio_data) == 0:
-            return False
-        # 2. Calculate Volume (RMS)
-        rms = np.sqrt(np.mean(audio_data.astype(np.float64)**2))
-        # 3. Decision Logic
-        if rms > self.threshold:
-            self.has_spoken = True
-            self.silence_start_time = None  # Reset timer because they are talking
-            return False
-        else:
-            if self.has_spoken:
-                if self.silence_start_time is None:
-                    self.silence_start_time = time.time()
-
-                if (time.time() - self.silence_start_time) >= self.silence_duration:
-                    self.has_spoken = False # Reset for next turn
-                    self.silence_start_time = None
-                    return True # TRIGGER: User is done
-
-            return False
-
-    
 
 async def speech_to_text(audio_bytes:bytes) ->dict:
     wav_buffer = io.BytesIO()
@@ -129,14 +96,14 @@ async def voice_chat(websocket: WebSocket,userId:str):
             
             # 2. ⚡ EMERGENCY SPLIT: Latency Guard
             words = sentence_buffer.split()
-            if len(words) > 12:
-                raw_phrase = " ".join(words[:10])
+            if len(words) > 8:
+                raw_phrase = " ".join(words[:8])
                 clean_phrase = clean_text_for_tts(raw_phrase)
                 
                 if clean_phrase:
                     await sentence_queue.put(clean_phrase)
                     
-                sentence_buffer = " ".join(words[10:])
+                sentence_buffer = " ".join(words[8:])
                 return
 
             # 3. 🌬️ NATURAL SPLIT: Breath-based logic
@@ -207,6 +174,7 @@ async def voice_chat(websocket: WebSocket,userId:str):
                         print("🛑 User interrupted! Killing AI task...")
                         active_ai_task.cancel()
                         active_ai_task = None
+                        master_buffer.clear()
                     
                     while not sentence_queue.empty():
                         try:
