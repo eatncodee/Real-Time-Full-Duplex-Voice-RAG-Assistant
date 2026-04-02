@@ -96,14 +96,14 @@ async def voice_chat(websocket: WebSocket,userId:str):
             
             # 2. ⚡ EMERGENCY SPLIT: Latency Guard
             words = sentence_buffer.split()
-            if len(words) > 8:
-                raw_phrase = " ".join(words[:8])
+            if len(words) > 12:
+                raw_phrase = " ".join(words[:10])
                 clean_phrase = clean_text_for_tts(raw_phrase)
                 
                 if clean_phrase:
                     await sentence_queue.put(clean_phrase)
                     
-                sentence_buffer = " ".join(words[8:])
+                sentence_buffer = " ".join(words[10:])
                 return
 
             # 3. 🌬️ NATURAL SPLIT: Breath-based logic
