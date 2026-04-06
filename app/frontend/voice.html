@@ -108,9 +108,15 @@ function scheduleChunk(rawBuffer) {
 }
 
 function stopAudio() {
-    activeSources.forEach(s => { try { s.stop(); } catch(_) {} });
+    activeSources.forEach(s => {
+        try {
+            s.onended = null; // Prevent it from triggering UI resets
+            s.stop();
+        } catch(_) {}
+    });
     activeSources = [];
-    nextStartTime = 0;
+    nextStartTime = 0; // 🧹 Reset the timeline to 'Now'
+    console.log("🔇 Audio playback fully purged.");
 }
 
 // ── Recording state ───────────────────────────────────────────────────────────
@@ -196,7 +202,14 @@ function connect() {
     if (typeof event.data === 'string') {
         try {
             const message = JSON.parse(event.data);
-            
+            if (message.type === 'interrupt') {
+                console.log("🛑 Backend signaled interrupt!");
+                stopAudio(); 
+                if (!isRecording) {
+                    updateStatus('connected', '✅ AI Stopped');
+                }                
+                return; // Stop processing this message
+            }
             if (message.type === 'status') {
                 const statusClass = (message.message.includes('Searching') || message.message.includes('Processing')) 
                     ? 'processing' : 'connected';                
@@ -276,6 +289,9 @@ recordButton.addEventListener('click', async () => {
     } else {
         // Start recording
         stopAudio();  // cut off any still-playing response
+        if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'mic_on' })); 
+        }
         transcriptDiv.textContent = 'Listening...';
         transcriptDiv.style.fontStyle = 'italic';
         transcriptDiv.style.color = '#666';

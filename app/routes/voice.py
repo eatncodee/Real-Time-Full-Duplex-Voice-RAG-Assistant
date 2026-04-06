@@ -5,6 +5,7 @@ import io,wave
 import re
 import httpx
 import os
+import json
 import asyncio
 from fastapi import UploadFile, File
 from cartesia import AsyncCartesia
@@ -40,7 +41,6 @@ async def speech_to_text(audio_bytes:bytes) ->dict:
     }
 
 
-processing_states = {}
 user_histories={}
 @router.websocket("/ws/voice/{userId}")
 async def voice_chat(websocket: WebSocket,userId:str):
@@ -53,7 +53,7 @@ async def voice_chat(websocket: WebSocket,userId:str):
         return    
 
     
-    detector = SilenceDetector(threshold=700, silence_duration=0.4)
+    detector = SilenceDetector(threshold=700, silence_duration=0.8)
     master_buffer = bytearray()
 
     is_processing=False
@@ -61,13 +61,14 @@ async def voice_chat(websocket: WebSocket,userId:str):
     sentence_queue = asyncio.Queue()
     tts_task = asyncio.create_task(cartesia_tts_worker(sentence_queue, websocket, interrupt_event))
     active_ai_task=None
+    was_speaking = False
 
     async def handle_full_brain_process(audio_bytes, userId, websocket, sentence_queue):
         nonlocal is_processing
-        is_processing = True # 🔒 Lock the brain
+        is_processing = True # Lock the brain
         
         try:
-            # 1. Background STT (The loop is now free to listen!)
+            # 1. Background STT 
             stt_result = await speech_to_text(audio_bytes)
             user_text = stt_result["transcript"]
             
@@ -80,7 +81,7 @@ async def voice_chat(websocket: WebSocket,userId:str):
         except Exception as e:
             print(f"🧠 Brain Error: {e}")
         finally:
-            is_processing = False # 🔓 Unlock for the next turn
+            is_processing = False # Unlock for the next turn
 
     async def run_ai_response(user_text, userId, websocket, sentence_queue):
         sentence_buffer = ""
@@ -89,7 +90,6 @@ async def voice_chat(websocket: WebSocket,userId:str):
         async def on_text_chunk(text: str):
             nonlocal sentence_buffer
             nonlocal full_ai_response
-
 
             sentence_buffer += text
             full_ai_response += text
@@ -155,48 +155,83 @@ async def voice_chat(websocket: WebSocket,userId:str):
     try:
         while True:
             message = await websocket.receive()
+        
             if message.get("type") == "websocket.disconnect":
                 break
 
+            if "text" in message:
+                try:
+                    data = json.loads(message["text"])
+                    if data.get("type") == "mic_on":
+                        print("🖱️ Mic Clicked: Forcing Backend Silence...")
+                        interrupt_event.set()
+                        
+                        # 🧹 Clean up
+                        if active_ai_task:
+                            active_ai_task.cancel()
+                            active_ai_task = None
+                        
+                        master_buffer.clear()
+                        
+                        while not sentence_queue.empty():
+                            try:
+                                sentence_queue.get_nowait()
+                                sentence_queue.task_done()
+                            except asyncio.QueueEmpty: break
+                except Exception as e:
+                    print(f"⚠️ Non-JSON text received: {e}")
+
+            
             if "bytes" in message:
                 chunk = message["bytes"]
                 master_buffer.extend(chunk)
 
+                # 🚀 THE "INSTANT KILL" LOGIC
+                if detector.has_spoken and not was_speaking:
+                    print("🔊 USER SPOKE: KILLING EVERYTHING.")
+                    
+                    # A. Stop the Backend Mouth
+                    interrupt_event.set()
+
+                    # B. Tell the Frontend to stop playing current audio
+                    await websocket.send_json({"type": "interrupt", "message": "🔇 Shutting up!"})
+
+                    ai_was_thinking = (active_ai_task and not active_ai_task.done())
+                    ai_has_more_to_say = not sentence_queue.empty()
+
+                    if is_processing or ai_was_thinking or ai_has_more_to_say:
+                        print("🧹 AI was busy. Wiping buffer and queue...")
+                        if active_ai_task:
+                            active_ai_task.cancel()
+                            active_ai_task = None
+                        
+                        master_buffer.clear()
+                        master_buffer.extend(chunk)
+
+                        while not sentence_queue.empty():
+                            try:
+                                sentence_queue.get_nowait()
+                                sentence_queue.task_done()
+                            except asyncio.QueueEmpty: break
+
+                # 🔄 THE MISSING LINE: Update the state tracker
+                # Without this, the 'if' block above triggers on every single chunk!
+                was_speaking = detector.has_spoken
+
+                # --- (Standard Rolling Window) ---
                 if not detector.has_spoken:
                     if len(master_buffer) > 32000:
                         master_buffer = master_buffer[-32000:]
 
-                if detector.has_spoken:
-
-                    interrupt_event.set()
-
-                    if active_ai_task and not active_ai_task.done():
-                        print("🛑 User interrupted! Killing AI task...")
-                        active_ai_task.cancel()
-                        active_ai_task = None
-                        master_buffer.clear()
-                    
-                    while not sentence_queue.empty():
-                        try:
-                            sentence_queue.get_nowait()
-                            sentence_queue.task_done()
-                        except asyncio.QueueEmpty:
-                            break
-
+                # --- (Processing Trigger) ---
                 if detector.is_user_finished(chunk) and not is_processing:
+                    was_speaking = False # Reset for the next turn
                     await websocket.send_json({"type": "status", "message": "🤫 Processing..."})
-                    print("🤫 Silence detected. Processing...")
-
                     audio_to_process = bytes(master_buffer)
                     master_buffer.clear()
-
                     active_ai_task = asyncio.create_task(
-                        handle_full_brain_process(
-                            audio_to_process, userId, websocket, sentence_queue
-                        )
+                        handle_full_brain_process(audio_to_process, userId, websocket, sentence_queue)
                     )
-                                        
-        
     except WebSocketDisconnect:
         print("❌ Voice client disconnected")
 
@@ -242,14 +277,13 @@ async def cartesia_tts_worker(sentence_queue: asyncio.Queue, websocket, interrup
                 
             interrupt_event.clear()
 
-            clean_sentence = clean_text_for_tts(sentence)
-            if not clean_sentence.strip():
+            if not sentence.strip():
                 sentence_queue.task_done()
                 continue
 
             stream = await ws.send(
                 model_id="sonic-3",
-                transcript=clean_sentence,
+                transcript=sentence,
                 voice={"mode": "id", "id": "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"},
                 output_format={
                     "container": "raw",
