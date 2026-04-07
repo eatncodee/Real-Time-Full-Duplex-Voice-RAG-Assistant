@@ -1,7 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.streaming import stream_rag_response
 from app.services.VAD import SilenceDetector
-import io,wave
+from app.services.STT import speech_to_text
 import re
 import httpx
 import os
@@ -9,7 +9,9 @@ import json
 import asyncio
 from fastapi import UploadFile, File
 from cartesia import AsyncCartesia
-from sarvamai import AsyncSarvamAI
+import random
+from app.services.fillers import FILLERS
+
 
 # STT--TTT-TTS--
 # sarvamai-openai-cartesia
@@ -18,41 +20,13 @@ from sarvamai import AsyncSarvamAI
 router=APIRouter()
 
 client=AsyncCartesia(api_key=os.getenv("Cartesia_key"),)
-sarvam_client=AsyncSarvamAI(api_subscription_key=os.getenv("Sarvam_key"))
 
-
-async def speech_to_text(audio_bytes:bytes) ->dict:
-    wav_buffer = io.BytesIO()
-    with wave.open(wav_buffer, 'wb') as wf:
-        wf.setnchannels(1)        # mono
-        wf.setsampwidth(2)        # 16-bit
-        wf.setframerate(16000)    # 16kHz — Sarvam requires this
-        wf.writeframes(audio_bytes)
-    wav_buffer.seek(0)
-
-    response = await sarvam_client.speech_to_text.transcribe(
-        file=("audio.wav", wav_buffer, "audio/wav"),
-        model="saarika:v2.5",     
-        language_code="unknown",  
-    )
-    return {
-        "transcript": response.transcript,
-        "language_code": response.language_code 
-    }
 
 
 user_histories={}
 @router.websocket("/ws/voice/{userId}")
 async def voice_chat(websocket: WebSocket,userId:str):
     await websocket.accept()
-    try:
-        await websocket.send_json({"type": "status", "message": "✅ Connected & Ready"})
-        print(f"✅ Voice client connected and handshake sent: {userId}")
-    except Exception:
-        print(f"⚠️ Client {userId} disconnected during handshake. Skipping.")
-        return    
-
-    
     detector = SilenceDetector(threshold=700, silence_duration=0.8)
     master_buffer = bytearray()
 
@@ -62,6 +36,17 @@ async def voice_chat(websocket: WebSocket,userId:str):
     tts_task = asyncio.create_task(cartesia_tts_worker(sentence_queue, websocket, interrupt_event))
     active_ai_task=None
     was_speaking = False
+
+    try:
+        await websocket.send_json({"type": "status", "message": "✅ Connected & Ready"})
+        print(f"✅ Voice client connected and handshake sent: {userId}")
+        welcome_parts = ["Hello!", "I'm your assistant.", "How can I help you?"]
+        for part in welcome_parts:
+            await sentence_queue.put(part)
+    except Exception:
+        print(f"⚠️ Client {userId} disconnected during handshake. Skipping.")
+        return    
+
 
     async def handle_full_brain_process(audio_bytes, userId, websocket, sentence_queue):
         nonlocal is_processing
@@ -186,7 +171,7 @@ async def voice_chat(websocket: WebSocket,userId:str):
                 chunk = message["bytes"]
                 master_buffer.extend(chunk)
 
-                # 🚀 THE "INSTANT KILL" LOGIC
+                # THE "INSTANT KILL" LOGIC
                 if detector.has_spoken and not was_speaking:
                     print("🔊 USER SPOKE: KILLING EVERYTHING.")
                     
@@ -214,8 +199,6 @@ async def voice_chat(websocket: WebSocket,userId:str):
                                 sentence_queue.task_done()
                             except asyncio.QueueEmpty: break
 
-                # 🔄 THE MISSING LINE: Update the state tracker
-                # Without this, the 'if' block above triggers on every single chunk!
                 was_speaking = detector.has_spoken
 
                 # --- (Standard Rolling Window) ---
@@ -232,6 +215,7 @@ async def voice_chat(websocket: WebSocket,userId:str):
                     active_ai_task = asyncio.create_task(
                         handle_full_brain_process(audio_to_process, userId, websocket, sentence_queue)
                     )
+
     except WebSocketDisconnect:
         print("❌ Voice client disconnected")
 
