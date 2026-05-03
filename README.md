@@ -17,7 +17,7 @@ This system runs all three in parallel. While the AI is speaking, it is already 
 ![Project Demo](app/demo/GIF_demo.gif)
 
 ### Full walkthrough video (with sound):
-<video src="https://github.com/user-attachments/assets/0cf4af4e-8dc2-4c0f-91db-405e93a6c499" width="100%" controls>
+<video src="https://github.com/user-attachments/assets/3807d2d7-48f9-44b1-bc6a-f7366b1ec7a0" width="100%" controls>
 </video>
 
 ---
