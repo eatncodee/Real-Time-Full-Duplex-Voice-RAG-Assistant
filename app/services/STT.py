@@ -1,4 +1,3 @@
-from app.services.streaming import stream_rag_response
 import io,wave
 import re
 import os
@@ -7,7 +6,7 @@ import time
 from sarvamai import AsyncSarvamAI
 
 
-sarvam_client=AsyncSarvamAI(api_subscription_key=os.getenv("Sarvam_key"))
+sarvam_client=AsyncSarvamAI(api_subscription_key=os.getenv("Sarvam_key") or os.getenv("SARVAM_API_KEY") or os.getenv("sarvam_key"))
 
 
 

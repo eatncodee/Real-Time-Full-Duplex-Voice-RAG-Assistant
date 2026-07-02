@@ -5,8 +5,10 @@ from app.services.embedding import create_embedding,create_embeddings_batch
 import json
 import asyncio
 
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-
+client = AsyncOpenAI(
+    api_key=settings.OPENAI_API_KEY,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+)
 
 search_tool = {
     "type": "function",
@@ -234,7 +236,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
             "error": str(e)
         }
 
-def generate_answer(question :str ,context_docs: str):
+async def generate_answer(question :str ,context_docs: str):
     prompt = f"""You are a helpful assistant answering questions.
             Context (retrieved information):
             {context_docs}
@@ -245,14 +247,14 @@ def generate_answer(question :str ,context_docs: str):
             - Keep the answer concise and direct
 
             Answer:"""
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=settings.CHAT_MODEL,
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
 
 
-def ask_question(question: str, n_results: int = 3) -> dict:
+async def ask_question(question: str, n_results: int = 3) -> dict:
     retrieved_docs = search_documents(question)
     if not retrieved_docs:
         return {
@@ -261,7 +263,7 @@ def ask_question(question: str, n_results: int = 3) -> dict:
             'sources': []
         }
     
-    answer = generate_answer(question, retrieved_docs)
+    answer = await generate_answer(question, retrieved_docs)
     
     return {
         'question': question,

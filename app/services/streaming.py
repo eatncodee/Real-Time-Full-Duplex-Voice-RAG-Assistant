@@ -6,8 +6,10 @@ from app.services.rag import search_tool, search_documents
 import json
 import asyncio
 
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-
+client = AsyncOpenAI(
+    api_key=settings.OPENAI_API_KEY,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+)
 
 async def stream_rag_response(user_message: str,conversation_history: list | None = None,websocket = None , text_chunk_callback= None):
     if conversation_history is None:
