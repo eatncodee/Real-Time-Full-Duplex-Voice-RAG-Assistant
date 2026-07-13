@@ -1,7 +1,7 @@
 from openai import AsyncOpenAI
 from app.config import settings
 from app.database import get_collection
-from app.services.embedding import create_embedding,create_embeddings_batch
+from app.services.embedding import create_embedding, create_embeddings_batch
 import json
 import asyncio
 
@@ -92,20 +92,79 @@ Examples that DON'T need search:
 }
 
 
-def search_documents(question: str)-> str:
+def search_documents(question: str) -> str:
+    """
+    FIX: Previously did a global top-3 chunk search across the entire
+    corpus, which could mix chunks from different people's resumes or
+    miss sections of the correct document entirely (e.g. missing the
+    "PROBLEM SOLVING" section because it lost to work-experience chunks
+    in vector similarity ranking).
+
+    Now: finds the single best-matching DOCUMENT first via its "source"
+    metadata, then returns every chunk belonging to that document. This
+    guarantees the LLM sees the complete document, not fragments.
+    """
     collection = get_collection()
-    
     q_emb = create_embedding(question)
-    if q_emb:
-        results = collection.query(
-            query_embeddings=[q_emb],
-            n_results=3
-        )
-        
+    if not q_emb:
+        return "No relevant docs found"
+
+    # Step 1: identify which document is most relevant
+    initial = collection.query(query_embeddings=[q_emb], n_results=1)
+    if not initial['metadatas'] or not initial['metadatas'][0]:
+        return "No relevant docs found"
+
+    top_source = initial['metadatas'][0][0].get('source')
+    if not top_source:
+        # fallback for any chunks uploaded without metadata (old /upload
+        # or /upload-batch endpoints don't attach "source")
+        results = collection.query(query_embeddings=[q_emb], n_results=3)
         if results['documents'] and len(results['documents']) > 0:
-            docs=results['documents'][0]
-            return "\n\n".join(docs)
-    return "No relevant docs found"
+            return "\n\n".join(results['documents'][0])
+        return "No relevant docs found"
+
+    # Step 2: pull every chunk belonging to that document
+    full_doc = collection.get(where={"source": top_source})
+    if not full_doc['documents']:
+        return "No relevant docs found"
+
+    return "\n\n".join(full_doc['documents'])
+
+
+def search_documents_with_confidence(question: str) -> dict:
+    """
+    Same retrieval logic as search_documents(), but also returns the raw
+    distance of the best match. This powers the "only answer from docs"
+    guardrail: one retrieval call does double duty as both the context
+    fetch AND the relevance check, so there's no separate classifier call
+    and no extra latency.
+
+    Lower distance = more relevant match. Chroma's default distance space
+    is squared L2 unless configured otherwise.
+
+    Returns: {"text": str, "distance": float | None, "source": str | None}
+    """
+    collection = get_collection()
+    q_emb = create_embedding(question)
+    if not q_emb:
+        return {"text": "", "distance": None, "source": None}
+
+    initial = collection.query(query_embeddings=[q_emb], n_results=1)
+    if not initial['documents'] or not initial['documents'][0]:
+        return {"text": "", "distance": None, "source": None}
+
+    top_distance = initial['distances'][0][0] if initial.get('distances') else None
+    top_source = None
+    if initial['metadatas'] and initial['metadatas'][0]:
+        top_source = initial['metadatas'][0][0].get('source')
+
+    if not top_source:
+        return {"text": initial['documents'][0][0], "distance": top_distance, "source": None}
+
+    full_doc = collection.get(where={"source": top_source})
+    text = "\n\n".join(full_doc['documents']) if full_doc['documents'] else ""
+
+    return {"text": text, "distance": top_distance, "source": top_source}
 
 
 def _build_openai_messages(conversation_history: list, system_instruction: str) -> list:
@@ -115,7 +174,7 @@ def _build_openai_messages(conversation_history: list, system_instruction: str) 
         role = entry["role"]
         if role == "model":
             role = "assistant"
-        
+
         parts = entry.get("parts", [])
         for part in parts:
             if isinstance(part, dict):
@@ -147,10 +206,10 @@ def _build_openai_messages(conversation_history: list, system_instruction: str) 
     return messages
 
 
-async def chat_with_function_calling(user_message: str, conversation_history:list | None = None,temprature: float=0.7) -> dict:
+async def chat_with_function_calling(user_message: str, conversation_history: list | None = None, temprature: float = 0.7) -> dict:
     if conversation_history is None:
         conversation_history = []
-    conversation_history.append({"role": "user","parts": [{"text":user_message}]})   
+    conversation_history.append({"role": "user", "parts": [{"text": user_message}]})
     system_instruction = """You are a helpful AI assistant with access to a company knowledge base.
 
 IMPORTANT: You have TWO capabilities:
@@ -174,7 +233,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
 """
     try:
         messages = _build_openai_messages(conversation_history, system_instruction)
-        
+
         response = await client.chat.completions.create(
             model=settings.CHAT_MODEL,
             messages=messages,
@@ -184,17 +243,17 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
         )
 
         choice = response.choices[0]
-        
+
         if choice.message.tool_calls:
             function_calls = choice.message.tool_calls
-            
+
             for fc in function_calls:
                 if fc.function.name == "search_documents":
                     query = json.loads(fc.function.arguments).get("query", "")
                     search_results = await asyncio.to_thread(search_documents, query)
-                    
-                    conversation_history.append({"role": "model","parts": [{"function_call": {"name": fc.function.name, "args": json.loads(fc.function.arguments)}}]})
-                    conversation_history.append({"role": "user","parts": [{"function_response": {"name": "search_documents","response": {"result": search_results}}}]}) 
+
+                    conversation_history.append({"role": "model", "parts": [{"function_call": {"name": fc.function.name, "args": json.loads(fc.function.arguments)}}]})
+                    conversation_history.append({"role": "user", "parts": [{"function_response": {"name": "search_documents", "response": {"result": search_results}}}]})
 
             final_messages = _build_openai_messages(conversation_history, system_instruction)
             final_response = await client.chat.completions.create(
@@ -202,21 +261,21 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
                 messages=final_messages,
                 temperature=temprature
             )
-            
+
             answer = final_response.choices[0].message.content
             used_rag = True
-        
+
         else:
             answer = choice.message.content
             used_rag = False
-        
-        conversation_history.append({"role": "model","parts": [{"text":answer}]})
-            
+
+        conversation_history.append({"role": "model", "parts": [{"text": answer}]})
+
         return {
             "answer": answer,
             "used_rag": used_rag,
             "conversation_history": conversation_history,
-            "temprature":temprature
+            "temprature": temprature
         }
     except Exception as e:
         import traceback
@@ -228,7 +287,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
             "role": "model",
             "parts": [{"text": error_message}]
         })
-        
+
         return {
             "answer": error_message,
             "used_rag": False,
@@ -236,7 +295,8 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
             "error": str(e)
         }
 
-async def generate_answer(question :str ,context_docs: str):
+
+async def generate_answer(question: str, context_docs: str):
     prompt = f"""You are a helpful assistant answering questions.
             Context (retrieved information):
             {context_docs}
@@ -262,9 +322,9 @@ async def ask_question(question: str, n_results: int = 3) -> dict:
             'answer': "I don't have any documents to answer your question. Please upload some documents first.",
             'sources': []
         }
-    
+
     answer = await generate_answer(question, retrieved_docs)
-    
+
     return {
         'question': question,
         'answer': answer,
