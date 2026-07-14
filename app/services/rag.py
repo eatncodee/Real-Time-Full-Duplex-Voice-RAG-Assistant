@@ -18,7 +18,7 @@ search_tool = {
 
 USE this function ONLY when the user asks about:
 
-📊 Company/Organization Information:
+Company/Organization Information:
 - Financial data (revenue, growth, metrics, budgets)
 - Employee count, team structure, hiring information
 - Products, services, features, or offerings
@@ -26,7 +26,7 @@ USE this function ONLY when the user asks about:
 - Office locations, company history, founding details
 - Leadership (CEO, executives, managers)
 
-👤 Personal Information (from uploaded resumes/documents):
+Personal Information (from uploaded resumes/documents):
 - Education background, degrees, universities
 - Work experience, job history, previous roles
 - Skills, certifications, qualifications
@@ -34,7 +34,7 @@ USE this function ONLY when the user asks about:
 - Contact information, languages spoken
 - Any biographical or professional details about individuals mentioned in uploaded documents
 
-📄 Document Content:
+Document Content:
 - Specific facts, dates, or details from uploaded files
 - Quotes or excerpts from documents
 - Technical specifications or requirements
@@ -42,42 +42,26 @@ USE this function ONLY when the user asks about:
 
 DO NOT use this function for:
 
-❌ General Knowledge:
+General Knowledge:
 - Math calculations (2+2, 50*30, etc.)
 - Scientific facts (photosynthesis, gravity, etc.)
 - Historical events (World War II, etc.)
 - Geography (capitals, countries, etc.)
 - Common definitions or explanations
 
-❌ Creative Tasks:
+Creative Tasks:
 - Writing stories, poems, or code
 - Brainstorming ideas
 - Giving opinions or advice (unless based on uploaded documents)
 
-❌ Conversational:
+Conversational:
 - Greetings (Hi, Hello, How are you)
 - Casual chat
 - Clarification questions
 
-🎯 Decision Rule:
-If the answer could be in an uploaded document or company knowledge base → SEARCH
-If the answer is general knowledge or conversational → DO NOT SEARCH
-
-Examples that NEED search:
-✅ "What was our Q4 revenue?"
-✅ "What is Rudraksh's educational background?"
-✅ "What skills does the uploaded resume mention?"
-✅ "How many employees do we have?"
-✅ "What projects has the person worked on?"
-✅ "What is mentioned about Python in the documents?"
-
-Examples that DON'T need search:
-❌ "What is 2+2?"
-❌ "Explain what Python is"
-❌ "What's the capital of France?"
-❌ "Write a function to sort an array"
-❌ "Hello, how are you?"
-❌ "Can you help me?" """,
+Decision Rule:
+If the answer could be in an uploaded document or company knowledge base -> SEARCH
+If the answer is general knowledge or conversational -> DO NOT SEARCH""",
         "parameters": {
             "type": "object",
             "properties": {
@@ -91,30 +75,53 @@ Examples that DON'T need search:
     }
 }
 
+# Below this many total characters, just return the whole document — the
+# overhead is negligible and small docs (resumes) benefit from full context.
+# At or above it, return only the matched section so a big policy PDF
+# doesn't blow up every prompt (and every TTS turn) in the voice pipeline.
+SMALL_DOC_CHAR_THRESHOLD = 4000
+
+
+def _reconstruct(docs: list, metas: list, section_filter: str | None = None) -> str:
+    """
+    Zip chunk text with its metadata, optionally narrow to one section, then
+    sort by chunk_no so the document is always reassembled in original
+    reading order (Chroma's .get() does not guarantee insertion order).
+    """
+    combined = list(zip(docs, metas))
+
+    if section_filter is not None:
+        narrowed = [(d, m) for d, m in combined if m.get('section') == section_filter]
+        if narrowed:  # only apply the filter if it actually matched something
+            combined = narrowed
+
+    combined.sort(key=lambda pair: pair[1].get('chunk_no', 0))
+    return "\n\n".join(d for d, _ in combined)
+
 
 def search_documents(question: str) -> str:
     """
-    FIX: Previously did a global top-3 chunk search across the entire
-    corpus, which could mix chunks from different people's resumes or
-    miss sections of the correct document entirely (e.g. missing the
-    "PROBLEM SOLVING" section because it lost to work-experience chunks
-    in vector similarity ranking).
-
-    Now: finds the single best-matching DOCUMENT first via its "source"
-    metadata, then returns every chunk belonging to that document. This
-    guarantees the LLM sees the complete document, not fragments.
+    Finds the single best-matching DOCUMENT first via its "source" metadata.
+    For small documents (e.g. resumes) it returns every chunk belonging to
+    that document, in original order, so the LLM sees complete context.
+    For large documents (e.g. policy PDFs) it returns only the matched
+    section's chunks, to keep prompt size — and voice-pipeline latency —
+    under control.
     """
     collection = get_collection()
     q_emb = create_embedding(question)
     if not q_emb:
         return "No relevant docs found"
 
-    # Step 1: identify which document is most relevant
+    # Step 1: identify which document (and which section within it) is most relevant
     initial = collection.query(query_embeddings=[q_emb], n_results=1)
     if not initial['metadatas'] or not initial['metadatas'][0]:
         return "No relevant docs found"
 
-    top_source = initial['metadatas'][0][0].get('source')
+    top_meta = initial['metadatas'][0][0]
+    top_source = top_meta.get('source')
+    top_section = top_meta.get('section')
+
     if not top_source:
         # fallback for any chunks uploaded without metadata (old /upload
         # or /upload-batch endpoints don't attach "source")
@@ -125,10 +132,16 @@ def search_documents(question: str) -> str:
 
     # Step 2: pull every chunk belonging to that document
     full_doc = collection.get(where={"source": top_source})
-    if not full_doc['documents']:
+    docs = full_doc.get('documents')
+    metas = full_doc.get('metadatas')
+    if not docs or not metas:
         return "No relevant docs found"
 
-    return "\n\n".join(full_doc['documents'])
+    total_chars = sum(len(d) for d in docs)
+    if total_chars <= SMALL_DOC_CHAR_THRESHOLD or not top_section:
+        return _reconstruct(docs, metas)
+
+    return _reconstruct(docs, metas, section_filter=top_section)
 
 
 def search_documents_with_confidence(question: str) -> dict:
@@ -155,14 +168,27 @@ def search_documents_with_confidence(question: str) -> dict:
 
     top_distance = initial['distances'][0][0] if initial.get('distances') else None
     top_source = None
+    top_section = None
     if initial['metadatas'] and initial['metadatas'][0]:
-        top_source = initial['metadatas'][0][0].get('source')
+        top_meta = initial['metadatas'][0][0]
+        top_source = top_meta.get('source')
+        top_section = top_meta.get('section')
 
     if not top_source:
         return {"text": initial['documents'][0][0], "distance": top_distance, "source": None}
 
     full_doc = collection.get(where={"source": top_source})
-    text = "\n\n".join(full_doc['documents']) if full_doc['documents'] else ""
+    docs = full_doc.get('documents')
+    metas = full_doc.get('metadatas')
+
+    if not docs or not metas:
+        return {"text": "", "distance": top_distance, "source": top_source}
+
+    total_chars = sum(len(d) for d in docs)
+    if total_chars <= SMALL_DOC_CHAR_THRESHOLD or not top_section:
+        text = _reconstruct(docs, metas)
+    else:
+        text = _reconstruct(docs, metas, section_filter=top_section)
 
     return {"text": text, "distance": top_distance, "source": top_source}
 
@@ -217,7 +243,7 @@ IMPORTANT: You have TWO capabilities:
 2. KNOWLEDGE BASE - Search uploaded documents
 
 RESPONSE STYLE:
--give answer in short no big pragraphs
+- give answer in short no big pragraphs
 - Be concise and direct
 - Answer the question FIRST, then provide brief supporting evidence
 - Use bullet points only when listing 3+ items
@@ -279,7 +305,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
         }
     except Exception as e:
         import traceback
-        print(f"❌ RAG error: {e}")
+        print(f"RAG error: {e}")
         traceback.print_exc()
         error_message = f"I encountered an error: {str(e)}"
 
@@ -298,15 +324,15 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
 
 async def generate_answer(question: str, context_docs: str):
     prompt = f"""You are a helpful assistant answering questions.
-            Context (retrieved information):
-            {context_docs}
+Context (retrieved information):
+{context_docs}
 
-            Question: {question}
+Question: {question}
 
-            Instructions:
-            - Keep the answer concise and direct
+Instructions:
+- Keep the answer concise and direct
 
-            Answer:"""
+Answer:"""
     response = await client.chat.completions.create(
         model=settings.CHAT_MODEL,
         messages=[{"role": "user", "content": prompt}]
