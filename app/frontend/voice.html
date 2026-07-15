@@ -1,318 +1,807 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Chat</title>
+    <title>Voice · RAG Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            /* -- token system -------------------------------------------------- */
+            --void: #0b0e11;
+            --panel: #12161b;
+            --panel-2: #171c22;
+            --wire: #262d35;
+            --wire-bright: #3a4552;
+            --paper: #e8e3d8;
+            --paper-dim: #8b8f8f;
+            --signal: #ffb454;
+            --signal-dim: #8a6a3a;
+            --signal-soft: rgba(255, 180, 84, 0.14);
+            --alert: #ff6b5c;
+            --ok: #6ee7a8;
+
+            --font-display: 'Space Grotesk', -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100vh; display: flex; justify-content: center;
-            align-items: center; padding: 20px;
+            height: 100%;
+            background: var(--void);
+            color: var(--paper);
+            font-family: var(--font-display);
         }
-        .container {
-            background: white; border-radius: 40px; padding: 50px;
-            max-width: 500px; width: 110%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center;
+
+        body {
+            background-image:
+                linear-gradient(var(--wire) 1px, transparent 1px),
+                linear-gradient(90deg, var(--wire) 1px, transparent 1px);
+            background-size: 32px 32px;
+            background-position: center;
+            background-attachment: fixed;
+            opacity: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
         }
-        h1 { color: #667eea; margin-bottom: 30px; }
-        .status { padding: 15px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; }
-        .status.disconnected { background: #ffe0e0; color: #cc0000; }
-        .status.connected    { background: #e0ffe0; color: #00aa00; }
-        .status.listening    { background: #fff3cd; color: #856404; }
-        .status.processing   { background: #d1ecf1; color: #0c5460; }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(ellipse at center, transparent 0%, var(--void) 78%);
+            pointer-events: none;
+        }
+
+        .console {
+            position: relative;
+            width: 100%;
+            max-width: 480px;
+            background: var(--panel);
+            border: 1px solid var(--wire);
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.7);
+        }
+
+        /* -- header ----------------------------------------------------------- */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--wire);
+            background: var(--panel-2);
+        }
+
+        .wordmark {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        .wordmark span {
+            color: var(--signal);
+        }
+
+        .session-tag {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--paper-dim);
+            letter-spacing: 0.04em;
+        }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--wire);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.03em;
+            color: var(--paper-dim);
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--paper-dim);
+            flex-shrink: 0;
+            transition: background 0.25s ease, box-shadow 0.25s ease;
+        }
+
+        .status-row.disconnected .status-dot {
+            background: var(--alert);
+            box-shadow: 0 0 8px var(--alert);
+        }
+
+        .status-row.connected .status-dot {
+            background: var(--ok);
+            box-shadow: 0 0 8px var(--ok);
+        }
+
+        .status-row.listening .status-dot {
+            background: var(--signal);
+            box-shadow: 0 0 10px var(--signal);
+            animation: dotpulse 1.2s ease-in-out infinite;
+        }
+
+        .status-row.processing .status-dot {
+            background: var(--signal);
+            box-shadow: 0 0 8px var(--signal);
+        }
+
+        @keyframes dotpulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        .status-text {
+            flex: 1;
+        }
+
+        .status-text.error {
+            color: var(--alert);
+        }
+
+        /* -- signal ring / mic -------------------------------------------------- */
+        .stage {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 36px 20px 28px;
+            gap: 18px;
+        }
+
+        .orb-wrap {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #ring {
+            position: absolute;
+            inset: 0;
+        }
+
         #recordButton {
-            width: 150px; height: 150px; border-radius: 50%;
-            border: none; font-size: 60px; cursor: pointer;
-            transition: all 0.3s; margin: 20px 0;
+            position: relative;
+            z-index: 2;
+            width: 84px;
+            height: 84px;
+            border-radius: 50%;
+            border: 1px solid var(--wire-bright);
+            background: var(--panel-2);
+            color: var(--paper);
+            font-size: 26px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
         }
-        #recordButton:not(.listening) { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        #recordButton.listening { background: #ff4444; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
-        #recordButton:disabled { opacity: 0.5; cursor: not-allowed; }
-        .transcript { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 10px; min-height: 60px; font-style: italic; color: #666; }
-        .error { color: #cc0000; margin: 10px 0; font-size: 14px; }
+
+        #recordButton:hover:not(:disabled) {
+            border-color: var(--signal-dim);
+            transform: scale(1.03);
+        }
+
+        #recordButton:active:not(:disabled) {
+            transform: scale(0.97);
+        }
+
+        #recordButton:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        #recordButton.listening {
+            background: var(--signal-soft);
+            border-color: var(--signal);
+            color: var(--signal);
+        }
+
+        #recordButton:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 3px;
+        }
+
+        .stage-caption {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--paper-dim);
+            letter-spacing: 0.02em;
+            min-height: 16px;
+            text-align: center;
+        }
+
+        /* -- transcript log ----------------------------------------------------- */
+        .panel-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--paper-dim);
+            padding: 10px 20px 0;
+        }
+
+        .transcript {
+            max-height: 220px;
+            min-height: 90px;
+            overflow-y: auto;
+            padding: 10px 20px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .transcript::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .transcript::-webkit-scrollbar-thumb {
+            background: var(--wire-bright);
+            border-radius: 3px;
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 10px;
+            align-items: baseline;
+        }
+
+        .log-role {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.06em;
+            width: 46px;
+            flex-shrink: 0;
+            padding-top: 2px;
+        }
+
+        .log-entry.you .log-role {
+            color: var(--paper-dim);
+        }
+
+        .log-entry.agent .log-role {
+            color: var(--signal);
+        }
+
+        .log-text {
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: var(--paper);
+        }
+
+        .transcript-empty {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--paper-dim);
+            padding: 8px 0;
+        }
+
+        /* -- telemetry ----------------------------------------------------------- */
+        .telemetry {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            border-top: 1px solid var(--wire);
+            background: var(--panel-2);
+        }
+
+        .tstat {
+            padding: 12px 8px;
+            text-align: center;
+            border-right: 1px solid var(--wire);
+        }
+
+        .tstat:last-child {
+            border-right: none;
+        }
+
+        .tstat-label {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            letter-spacing: 0.08em;
+            color: var(--paper-dim);
+            text-transform: uppercase;
+        }
+
+        .tstat-value {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--signal);
+            margin-top: 4px;
+        }
+
+        .tstat-value.idle {
+            color: var(--wire-bright);
+        }
+
+        @media (max-width: 420px) {
+            .orb-wrap {
+                width: 170px;
+                height: 170px;
+            }
+
+            #recordButton {
+                width: 72px;
+                height: 72px;
+                font-size: 22px;
+            }
+
+            .telemetry {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .tstat:nth-child(2) {
+                border-right: none;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .status-row.listening .status-dot {
+                animation: none;
+            }
+
+            #recordButton {
+                transition: none;
+            }
+        }
     </style>
 </head>
+
 <body>
-<div class="container">
-    <h1>Generative AI Assistant🎤</h1>
-    <div id="status" class="status disconnected">Disconnected</div>
-    <button id="recordButton" disabled>🎤</button>
-    <div class="transcript" id="transcript">Click the microphone to speak...</div>
-    <div id="error" class="error"></div>
-</div>
-<script>
-// ── Playback config (Cartesia: pcm_f32le 44100Hz) ─────────────────────────────
-const PLAYBACK_SAMPLE_RATE = 44100;
-const BYTES_PER_SAMPLE     = 4;     // float32 = 4 bytes
-const NUM_CHANNELS         = 1;
-const SCHEDULE_AHEAD       = 0.1;   // 100ms look-ahead
 
-// ── Recording config (Sarvam STT + VAD: 16kHz 16-bit PCM) ────────────────────
-const RECORD_SAMPLE_RATE   = 16000;
+    <div class="console">
+        <div class="header">
+            <div class="wordmark">VOICE<span>·</span>RAG</div>
+            <div class="session-tag" id="sessionTag">session · ----</div>
+        </div>
 
-// ── Playback state ────────────────────────────────────────────────────────────
-let audioCtx      = null;
-let nextStartTime = 0;
-let activeSources = [];
+        <div class="status-row disconnected" id="statusRow">
+            <div class="status-dot"></div>
+            <div class="status-text" id="statusText">offline</div>
+        </div>
 
-function getAudioContext() {
-    if (!audioCtx || audioCtx.state === 'closed') {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        nextStartTime = 0;
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    return audioCtx;
-}
+        <div class="stage">
+            <div class="orb-wrap">
+                <canvas id="ring" width="200" height="200"></canvas>
+                <button id="recordButton" disabled aria-label="Start speaking">&#127908;</button>
+            </div>
+            <div class="stage-caption" id="stageCaption">connecting to server&hellip;</div>
+        </div>
 
-function pcmToAudioBuffer(ctx, rawBuffer) {
-    const samples = Math.floor(rawBuffer.byteLength / BYTES_PER_SAMPLE);
-    if (samples === 0) return null;
-    const audioBuffer = ctx.createBuffer(NUM_CHANNELS, samples, PLAYBACK_SAMPLE_RATE);
-    const channelData = audioBuffer.getChannelData(0);
-    const view = new DataView(rawBuffer);
-    for (let i = 0; i < samples; i++) {
-        channelData[i] = view.getFloat32(i * 4, true);
-    }
-    return audioBuffer;
-}
+        <div class="panel-label">Transcript</div>
+        <div class="transcript" id="transcript">
+            <div class="transcript-empty" id="transcriptEmpty">— nothing said yet —</div>
+        </div>
 
-function scheduleChunk(rawBuffer) {
-    const ctx         = getAudioContext();
-    const audioBuffer = pcmToAudioBuffer(ctx, rawBuffer);
-    if (!audioBuffer) return;
+        <div class="telemetry" id="telemetry">
+            <div class="tstat">
+                <div class="tstat-label">STT</div>
+                <div class="tstat-value idle" id="statStt">&mdash;</div>
+            </div>
+            <div class="tstat">
+                <div class="tstat-label">Retrieval</div>
+                <div class="tstat-value idle" id="statRetr">&mdash;</div>
+            </div>
+            <div class="tstat">
+                <div class="tstat-label">TTFB</div>
+                <div class="tstat-value idle" id="statTtfb">&mdash;</div>
+            </div>
+            <div class="tstat">
+                <div class="tstat-label">TTFA</div>
+                <div class="tstat-value idle" id="statTtfa">&mdash;</div>
+            </div>
+        </div>
+    </div>
 
-    if (nextStartTime < ctx.currentTime) {
-        nextStartTime = ctx.currentTime + SCHEDULE_AHEAD;
-    }
+    <script>
+        // ── Playback config (Cartesia: pcm_f32le 44100Hz) ─────────────────────────
+        const PLAYBACK_SAMPLE_RATE = 44100;
+        const BYTES_PER_SAMPLE = 4; // float32 = 4 bytes
+        const NUM_CHANNELS = 1;
+        const SCHEDULE_AHEAD = 0.1; // 100ms look-ahead
 
-    const source  = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
+        // ── Recording config (Sarvam STT + VAD: 16kHz 16-bit PCM) ─────────────────
+        const RECORD_SAMPLE_RATE = 16000;
 
-    const startAt = Math.max(ctx.currentTime + SCHEDULE_AHEAD, nextStartTime);
-    source.start(startAt);
-    nextStartTime = startAt + audioBuffer.duration;
+        // ── Playback state ─────────────────────────────────────────────────────
+        let audioCtx = null;
+        let nextStartTime = 0;
+        let activeSources = [];
+        let playbackAnalyser = null;
 
-    activeSources.push(source);
-    source.onended = () => {
-        activeSources = activeSources.filter(s => s !== source);
-        if (activeSources.length === 0 && nextStartTime <= ctx.currentTime + SCHEDULE_AHEAD) {
-            updateStatus('connected', '✅ Ready – Click mic to speak again');
-            recordButton.disabled = false;
-        }
-    };
-}
-
-function stopAudio() {
-    activeSources.forEach(s => {
-        try {
-            s.onended = null; // Prevent it from triggering UI resets
-            s.stop();
-        } catch(_) {}
-    });
-    activeSources = [];
-    nextStartTime = 0; // 🧹 Reset the timeline to 'Now'
-    console.log("🔇 Audio playback fully purged.");
-}
-
-// ── Recording state ───────────────────────────────────────────────────────────
-let micStream   = null;
-let micContext  = null;
-let scriptNode  = null;
-let isRecording = false;
-
-async function startRecording() {
-    if (isRecording) return;
-
-    // Ask browser for 16kHz mono — matches Sarvam STT + VAD requirements
-    micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            sampleRate: RECORD_SAMPLE_RATE,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-        }
-    });
-
-    // Separate AudioContext for recording — never mix with playback context
-    micContext = new AudioContext({ sampleRate: RECORD_SAMPLE_RATE });
-
-    const source = micContext.createMediaStreamSource(micStream);
-    // 4096 samples @ 16kHz ≈ 256ms per callback — good chunk size for VAD
-    scriptNode   = micContext.createScriptProcessor(4096, 1, 1);
-
-    scriptNode.onaudioprocess = (e) => {
-        if (!isRecording) return;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-        const float32 = e.inputBuffer.getChannelData(0);
-
-        // Float32 → Int16 conversion
-        // Backend VAD: np.frombuffer(chunk, dtype=np.int16) ← needs Int16
-        // Sarvam STT:  wf.setsampwidth(2) ← needs 16-bit (2 bytes per sample)
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-            const s = Math.max(-1, Math.min(1, float32[i]));
-            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-
-        ws.send(int16.buffer);  // raw bytes → backend message["bytes"]
-    };
-
-    source.connect(scriptNode);
-    scriptNode.connect(micContext.destination); // must connect to fire onaudioprocess
-    isRecording = true;
-}
-
-function stopRecording() {
-    if (!isRecording) return;
-    isRecording = false;
-    if (scriptNode)  { scriptNode.disconnect(); scriptNode = null; }
-    if (micStream)   { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-    if (micContext)  { micContext.close(); micContext = null; }
-}
-
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-let ws = null;
-
-const recordButton  = document.getElementById('recordButton');
-const statusDiv     = document.getElementById('status');
-const transcriptDiv = document.getElementById('transcript');
-const errorDiv      = document.getElementById('error');
-
-function generateUserId() { return 'user_' + Math.random().toString(36).substr(2, 9); }
-const userId = sessionStorage.getItem('userId') || generateUserId();
-sessionStorage.setItem('userId', userId);
-
-function connect() {
-    ws = new WebSocket(`ws://localhost:8000/ws/voice/${userId}`);
-    ws.binaryType = 'arraybuffer';
-
-    ws.onopen = () => {
-       updateStatus('connected', '✅ Synchronizing...'); 
-        recordButton.disabled = false;
-    };
-
-    ws.onmessage = (event) => {
-    // 🟢 HANDLE STATUS UPDATES (Strings/JSON)
-    if (typeof event.data === 'string') {
-        try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'interrupt') {
-                console.log("🛑 Backend signaled interrupt!");
-                stopAudio(); 
-                if (!isRecording) {
-                    updateStatus('connected', '✅ AI Stopped');
-                }                
-                return; // Stop processing this message
+        function getAudioContext() {
+            if (!audioCtx || audioCtx.state === 'closed') {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                nextStartTime = 0;
+                playbackAnalyser = audioCtx.createAnalyser();
+                playbackAnalyser.fftSize = 128;
+                playbackAnalyser.connect(audioCtx.destination);
             }
-            if (message.type === 'status') {
-                const statusClass = (message.message.includes('Searching') || message.message.includes('Processing')) 
-                    ? 'processing' : 'connected';                
-                    updateStatus(statusClass, message.message);
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            return audioCtx;
+        }
 
-                // ⚡ FIX: Detect silence signal from backend and reset button IMMEDIATELY
-                if (message.message.includes('Processing') || message.message.includes('🤫')) {
+        function pcmToAudioBuffer(ctx, rawBuffer) {
+            const samples = Math.floor(rawBuffer.byteLength / BYTES_PER_SAMPLE);
+            if (samples === 0) return null;
+            const audioBuffer = ctx.createBuffer(NUM_CHANNELS, samples, PLAYBACK_SAMPLE_RATE);
+            const channelData = audioBuffer.getChannelData(0);
+            const view = new DataView(rawBuffer);
+            for (let i = 0; i < samples; i++) {
+                channelData[i] = view.getFloat32(i * 4, true);
+            }
+            return audioBuffer;
+        }
+
+        function scheduleChunk(rawBuffer) {
+            const ctx = getAudioContext();
+            const audioBuffer = pcmToAudioBuffer(ctx, rawBuffer);
+            if (!audioBuffer) return;
+
+            if (nextStartTime < ctx.currentTime) {
+                nextStartTime = ctx.currentTime + SCHEDULE_AHEAD;
+            }
+
+            const source = ctx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(playbackAnalyser);
+
+            const startAt = Math.max(ctx.currentTime + SCHEDULE_AHEAD, nextStartTime);
+            source.start(startAt);
+            nextStartTime = startAt + audioBuffer.duration;
+
+            activeSources.push(source);
+            source.onended = () => {
+                activeSources = activeSources.filter(s => s !== source);
+                if (activeSources.length === 0 && nextStartTime <= ctx.currentTime + SCHEDULE_AHEAD) {
+                    setStatus('connected', 'ready — tap to speak again');
+                    recordButton.disabled = false;
+                }
+            };
+        }
+
+        function stopAudio() {
+            activeSources.forEach(s => {
+                try {
+                    s.onended = null; // prevent it from triggering UI resets
+                    s.stop();
+                } catch (_) { }
+            });
+            activeSources = [];
+            nextStartTime = 0; // reset the timeline to "now"
+        }
+
+        // ── Recording state ────────────────────────────────────────────────────
+        let micStream = null;
+        let micContext = null;
+        let scriptNode = null;
+        let micAnalyser = null;
+        let isRecording = false;
+
+        async function startRecording() {
+            if (isRecording) return;
+
+            micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    sampleRate: RECORD_SAMPLE_RATE,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                }
+            });
+
+            micContext = new AudioContext({ sampleRate: RECORD_SAMPLE_RATE });
+
+            const source = micContext.createMediaStreamSource(micStream);
+            micAnalyser = micContext.createAnalyser();
+            micAnalyser.fftSize = 128;
+            source.connect(micAnalyser);
+
+            scriptNode = micContext.createScriptProcessor(4096, 1, 1);
+
+            scriptNode.onaudioprocess = (e) => {
+                if (!isRecording) return;
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                const float32 = e.inputBuffer.getChannelData(0);
+                const int16 = new Int16Array(float32.length);
+                for (let i = 0; i < float32.length; i++) {
+                    const s = Math.max(-1, Math.min(1, float32[i]));
+                    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+                ws.send(int16.buffer);
+            };
+
+            source.connect(scriptNode);
+            scriptNode.connect(micContext.destination);
+            isRecording = true;
+        }
+
+        function stopRecording() {
+            if (!isRecording) return;
+            isRecording = false;
+            if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+            if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+            if (micContext) { micContext.close(); micContext = null; }
+            micAnalyser = null;
+        }
+
+        // ── Signal ring visualizer ─────────────────────────────────────────────
+        const ringCanvas = document.getElementById('ring');
+        const ringCtx = ringCanvas.getContext('2d');
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        function drawRing() {
+            const w = ringCanvas.width, h = ringCanvas.height;
+            const cx = w / 2, cy = h / 2;
+            const baseR = 62;
+            ringCtx.clearRect(0, 0, w, h);
+
+            let analyser = null;
+            let color = '#3a4552';
+            if (isRecording && micAnalyser) { analyser = micAnalyser; color = '#ffb454'; }
+            else if (activeSources.length > 0 && playbackAnalyser) { analyser = playbackAnalyser; color = '#e8e3d8'; }
+
+            const bars = 48;
+            const data = new Uint8Array(analyser ? analyser.frequencyBinCount : 0);
+            if (analyser) analyser.getByteFrequencyData(data);
+
+            for (let i = 0; i < bars; i++) {
+                const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+                let amp = 4;
+                if (analyser) {
+                    const v = data[Math.floor((i / bars) * data.length)] || 0;
+                    amp = 4 + (v / 255) * 26;
+                } else {
+                    amp = 4 + Math.sin(Date.now() / 900 + i) * 1.2; // idle ambient breathing
+                }
+                const x1 = cx + Math.cos(angle) * baseR;
+                const y1 = cy + Math.sin(angle) * baseR;
+                const x2 = cx + Math.cos(angle) * (baseR + amp);
+                const y2 = cy + Math.sin(angle) * (baseR + amp);
+                ringCtx.strokeStyle = color;
+                ringCtx.globalAlpha = analyser ? 0.85 : 0.35;
+                ringCtx.lineWidth = 2;
+                ringCtx.lineCap = 'round';
+                ringCtx.beginPath();
+                ringCtx.moveTo(x1, y1);
+                ringCtx.lineTo(x2, y2);
+                ringCtx.stroke();
+            }
+            ringCtx.globalAlpha = 1;
+
+            if (!reducedMotion) {
+                requestAnimationFrame(drawRing);
+            }
+        }
+        requestAnimationFrame(drawRing);
+        if (reducedMotion) setInterval(drawRing, 400); // still update on state change, just not every frame
+
+        // ── Transcript log ───────────────────────────────────────────────────
+        const transcriptDiv = document.getElementById('transcript');
+        const transcriptEmpty = document.getElementById('transcriptEmpty');
+        let currentAgentEntry = null;
+
+        function addLogEntry(role, text) {
+            if (transcriptEmpty) transcriptEmpty.remove();
+            const row = document.createElement('div');
+            row.className = `log-entry ${role}`;
+            const label = document.createElement('div');
+            label.className = 'log-role';
+            label.textContent = role === 'you' ? 'YOU' : 'AGENT';
+            const body = document.createElement('div');
+            body.className = 'log-text';
+            body.textContent = text;
+            row.appendChild(label);
+            row.appendChild(body);
+            transcriptDiv.appendChild(row);
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+            return body;
+        }
+
+        function appendToAgentEntry(chunk) {
+            if (!currentAgentEntry) {
+                currentAgentEntry = addLogEntry('agent', '');
+            }
+            currentAgentEntry.textContent += chunk;
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        }
+
+        // ── Telemetry ─────────────────────────────────────────────────────────
+        const statEls = {
+            stt: document.getElementById('statStt'),
+            retrieval: document.getElementById('statRetr'),
+            ttfb: document.getElementById('statTtfb'),
+            ttfa: document.getElementById('statTtfa'),
+        };
+        function setStat(key, ms) {
+            const el = statEls[key];
+            if (!el) return;
+            el.textContent = typeof ms === 'number' ? `${Math.round(ms)}ms` : '—';
+            el.classList.toggle('idle', typeof ms !== 'number');
+        }
+        function resetStats() {
+            Object.keys(statEls).forEach(k => setStat(k, null));
+        }
+
+        // ── WebSocket ─────────────────────────────────────────────────────────
+        let ws = null;
+
+        const recordButton = document.getElementById('recordButton');
+        const statusRow = document.getElementById('statusRow');
+        const statusText = document.getElementById('statusText');
+        const stageCaption = document.getElementById('stageCaption');
+        const sessionTag = document.getElementById('sessionTag');
+
+        function generateUserId() { return 'user_' + Math.random().toString(36).substr(2, 9); }
+        const userId = sessionStorage.getItem('userId') || generateUserId();
+        sessionStorage.setItem('userId', userId);
+        sessionTag.textContent = `session · ${userId.replace('user_', '')}`;
+
+        function getWsUrl(id) {
+            if (location.protocol === 'file:' || !location.host) {
+                return `ws://localhost:8000/ws/voice/${id}`;
+            }
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${proto}//${location.host}/ws/voice/${id}`;
+        }
+
+        function setStatus(type, message) {
+            statusRow.className = `status-row ${type}`;
+            statusText.textContent = message;
+            statusText.classList.toggle('error', type === 'disconnected');
+        }
+
+        function connect() {
+            ws = new WebSocket(getWsUrl(userId));
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                setStatus('connected', 'synchronizing…');
+                stageCaption.textContent = 'connected — tap the mic to speak';
+                recordButton.disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    let message;
+                    try { message = JSON.parse(event.data); } catch (e) { return; }
+
+                    if (message.type === 'interrupt') {
+                        stopAudio();
+                        if (!isRecording) setStatus('connected', 'ready');
+                        return;
+                    }
+
+                    if (message.type === 'transcript') {
+                        addLogEntry('you', message.text);
+                        return;
+                    }
+
+                    if (message.type === 'timing') {
+                        setStat('stt', message.stt_ms);
+                        setStat('retrieval', message.retrieval_ms);
+                        setStat('ttfb', message.ttfb_ms);
+                        setStat('ttfa', message.ttfa_ms);
+                        return;
+                    }
+
+                    if (message.type === 'status') {
+                        const busy = message.message && (message.message.includes('Searching') || message.message.includes('Processing'));
+                        setStatus(busy ? 'processing' : 'connected', message.message);
+
+                        if (message.message && (message.message.includes('Processing') || message.message.includes('🤫'))) {
+                            if (isRecording) {
+                                stopRecording();
+                                recordButton.classList.remove('listening');
+                                recordButton.disabled = false;
+                                stageCaption.textContent = 'thinking…';
+                            }
+                        }
+                        return;
+                    }
+
+                    if (message.type === 'answer') {
+                        appendToAgentEntry(message.chunk);
+                        return;
+                    }
+
+                    if (message.type === 'done') {
+                        setStatus('connected', 'ready');
+                        recordButton.disabled = false;
+                        currentAgentEntry = null;
+                        return;
+                    }
+                } else {
+                    const chunk = event.data;
+                    if (!chunk || chunk.byteLength === 0) return;
+
                     if (isRecording) {
                         stopRecording();
                         recordButton.classList.remove('listening');
-                        recordButton.disabled = false;
-                        transcriptDiv.textContent = 'Thinking...';
                     }
+
+                    if (activeSources.length === 0) {
+                        setStatus('processing', 'playing response…');
+                        stageCaption.textContent = 'speaking…';
+                        recordButton.disabled = false;
+                    }
+
+                    getAudioContext();
+                    scheduleChunk(chunk);
+                }
+            };
+
+            ws.onclose = () => {
+                setStatus('disconnected', 'connection lost — retrying');
+                stageCaption.textContent = 'reconnecting…';
+                recordButton.disabled = true;
+                stopAudio();
+                stopRecording();
+                setTimeout(connect, 3000);
+            };
+
+            ws.onerror = () => {
+                stageCaption.textContent = 'connection error';
+            };
+        }
+
+        recordButton.addEventListener('click', async () => {
+            getAudioContext(); // must be inside a user gesture
+
+            if (isRecording) {
+                stopRecording();
+                recordButton.classList.remove('listening');
+                setStatus('connected', 'ready — tap to speak');
+                stageCaption.textContent = 'ready — tap to speak';
+            } else {
+                stopAudio();
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'mic_on' }));
+                }
+                resetStats();
+                stageCaption.textContent = 'listening…';
+                try {
+                    await startRecording();
+                    recordButton.classList.add('listening');
+                    setStatus('listening', 'listening — speak now');
+                } catch (err) {
+                    stageCaption.textContent = `mic error: ${err.message}`;
                 }
             }
-            
-            if (message.type === 'answer') {
-                if (transcriptDiv.textContent === 'Listening...' || transcriptDiv.textContent === 'Thinking...') {
-                    transcriptDiv.textContent = '';
-                    transcriptDiv.style.fontStyle = 'normal';
-                    transcriptDiv.style.color = '#000';
-                }
-                transcriptDiv.textContent += message.chunk;
-            }
-            
-            if (message.type === 'done') {
-                updateStatus('connected', '✅ Ready');
-                recordButton.disabled = false;
-            }
-        } catch (e) {
-            console.log("Plain string received:", event.data);
-        }
-        return;
-    }
+        });
 
-    // 🔵 HANDLE AUDIO (Binary)
-    const chunk = event.data;
-    if (!chunk || chunk.byteLength === 0) return;
-
-    // Safety check: mic should already be off from the JSON signal, 
-    // but if it's still on, kill it now.
-    if (isRecording) {
-        stopRecording();
-        recordButton.classList.remove('listening');
-    }
-
-    if (activeSources.length === 0) {
-        updateStatus('processing', '🔊 Playing response…');
-        recordButton.disabled = false;
-    }
-
-    getAudioContext();
-    scheduleChunk(chunk);
-};
-
-    ws.onclose = () => {
-        updateStatus('disconnected', '❌ Disconnected');
-        recordButton.disabled = true;
-        stopAudio();
-        stopRecording();
-        setTimeout(connect, 3000);
-    };
-
-    ws.onerror = () => { errorDiv.textContent = '⚠️ Connection error'; };
-}
-
-// ── Button: press to start, VAD stops automatically ──────────────────────────
-recordButton.addEventListener('click', async () => {
-    errorDiv.textContent = '';
-    getAudioContext();  // must be inside a user gesture
-
-    if (isRecording) {
-        // Manual stop — user changed their mind
-        stopRecording();
-        recordButton.classList.remove('listening');
-        updateStatus('connected', '✅ Ready – Click mic to speak');
-    } else {
-        // Start recording
-        stopAudio();  // cut off any still-playing response
-        if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'mic_on' })); 
-        }
-        transcriptDiv.textContent = 'Listening...';
-        transcriptDiv.style.fontStyle = 'italic';
-        transcriptDiv.style.color = '#666';
-        try {
-            await startRecording();
-            recordButton.classList.add('listening');
-            updateStatus('listening', '🎤 Listening… Speak now!');
-            transcriptDiv.textContent = 'Listening…';
-        } catch (err) {
-            errorDiv.textContent = `Mic error: ${err.message}`;
-            console.error(err);
-        }
-    }
-});
-
-function updateStatus(type, message) {
-    statusDiv.className   = `status ${type}`;
-    statusDiv.textContent = message;
-}
-
-connect();
-</script>
+        connect();
+    </script>
 </body>
+
 </html>
