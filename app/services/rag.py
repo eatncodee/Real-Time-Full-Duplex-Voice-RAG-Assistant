@@ -4,6 +4,8 @@ from app.database import get_collection
 from app.services.embedding import create_embedding, create_embeddings_batch
 import json
 import asyncio
+# reptor RAG
+# avatarautomaTIC rag
 
 client = AsyncOpenAI(
     api_key=settings.OPENAI_API_KEY,
