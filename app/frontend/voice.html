@@ -667,10 +667,23 @@
         sessionStorage.setItem('userId', userId);
         sessionTag.textContent = `session · ${userId.replace('user_', '')}`;
 
+        // Change this if your backend runs somewhere other than localhost:8000 in dev.
+        const DEV_BACKEND_HOST = 'localhost:8000';
+
         function getWsUrl(id) {
-            if (location.protocol === 'file:' || !location.host) {
-                return `ws://localhost:8000/ws/voice/${id}`;
+            const isLocalDev = location.protocol === 'file:'
+                || location.hostname === 'localhost'
+                || location.hostname === '127.0.0.1';
+
+            if (isLocalDev) {
+                // The page itself may be served from a different port (e.g. Live
+                // Server on 5500) than the FastAPI backend (8000) — always target
+                // the backend explicitly here rather than assuming same-origin.
+                return `ws://${DEV_BACKEND_HOST}/ws/voice/${id}`;
             }
+
+            // In a real deployment (behind a reverse proxy, same origin for both
+            // frontend and backend), same-origin resolution is correct.
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             return `${proto}//${location.host}/ws/voice/${id}`;
         }
