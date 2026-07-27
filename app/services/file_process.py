@@ -51,11 +51,38 @@ def process_file(filename: str, file_content: bytes) -> str:
 _HEADER_KEYWORDS = [
     "education", "experience", "work experience", "projects", "skills",
     "problem solving", "certifications", "achievements", "summary",
-    "objective", "contact", "languages", "publications", "policy",
+    "profile", "objective", "contact", "languages", "publications", "policy",
     "leadership", "extracurricular", "awards",
 ]
 
 _SECTION_NUM_RE = re.compile(r'^section\s*\d+', re.IGNORECASE)
+
+# Numbered subsection headings, e.g. "1.1 Regulatory Purpose Statement",
+# "2.2 Maximum Accumulation Thresholds and Year-End Encashment Rules".
+# These are how multi-page policy PDFs actually mark real section breaks —
+# without detecting them, the whole document falls into one giant section
+# and the section-only-retrieval optimization in rag.py never kicks in.
+_NUMBERED_HEADING_RE = re.compile(r'^\d+(\.\d+)+\s+(.+)$')
+
+_HEADING_STOPWORDS = {
+    "and", "or", "of", "the", "a", "an", "to", "in", "on", "for", "with", "by",
+}
+
+
+def _is_titlecase_heading(words: list[str]) -> bool:
+    """
+    True if most alphabetic content words are capitalized — how real headings
+    look ("Annual Accrual Rates and Structural Pro-Rata Multipliers"). PDF
+    text extraction often breaks mid-sentence onto a new line (e.g. a wrapped
+    line starting "1.66 days for each complete..."), and those wrapped
+    fragments are lowercase, so this filters them out even though they
+    happen to start with a number.
+    """
+    content_words = [w for w in words if w.isalpha() and w.lower() not in _HEADING_STOPWORDS]
+    if not content_words:
+        return False
+    capitalized = sum(1 for w in content_words if w[0].isupper())
+    return capitalized / len(content_words) >= 0.7
 
 
 def _is_header(line: str) -> bool:
@@ -66,21 +93,37 @@ def _is_header(line: str) -> bool:
     is not, even though both contain "skills". Without this word-count
     check, ordinary bullet lines get misclassified as new section headers
     and silently truncate the real section.
+
+    Numbered headings ("Section 4: ...", "1.1 Regulatory Purpose Statement")
+    are checked separately and allowed to run longer, since policy-doc
+    headings are naturally wordier than resume headers.
     """
-    if not line or len(line) >= 60 or line.endswith(('.', ',', ';')):
+    # Guard against pathologically long single "lines" reaching the regex
+    # engine below (e.g. a malformed upload with no real newlines).
+    if not line or len(line) > 300 or line.endswith(('.', ',', ';')):
         return False
 
     line_lower = line.lower()
 
     if _SECTION_NUM_RE.match(line_lower):
-        return True
+        return len(line) < 100
+
+    numbered_match = _NUMBERED_HEADING_RE.match(line)
+    if numbered_match and len(line) < 100:
+        if _is_titlecase_heading(numbered_match.group(2).split()):
+            return True
+
+    if len(line) >= 60:
+        return False
 
     for kw in _HEADER_KEYWORDS:
         if kw in line_lower:
             kw_words = len(kw.split())
             line_words = len(line_lower.split())
-            # keyword must make up most of the line's words
-            if line_words <= kw_words + 2:
+            # keyword must make up most of the line's words — loosened to
+            # +3 so compound headers like "LEADERSHIP & PROFESSIONAL
+            # EXPERIENCE" or "RESEARCH & PROFESSIONAL EXPERIENCE" still match
+            if line_words <= kw_words + 3:
                 return True
     return False
 

@@ -9,8 +9,6 @@ import asyncio
 from cartesia import AsyncCartesia
 import time
 
-timing_log = {}
-
 router = APIRouter()
 
 client = AsyncCartesia(api_key=os.getenv("Cartesia_key"))
@@ -24,10 +22,14 @@ async def voice_chat(websocket: WebSocket, userId: str):
     detector = SilenceDetector(threshold=700, silence_duration=0.3)
     master_buffer = bytearray()
 
+    # Per-connection, not module-level — a module-level dict would be
+    # shared and clobbered across every concurrent user of this process.
+    timing_log = {}
+
     is_processing = False
     interrupt_event = asyncio.Event()
     sentence_queue = asyncio.Queue()
-    tts_task = asyncio.create_task(cartesia_tts_worker(sentence_queue, websocket, interrupt_event))
+    tts_task = asyncio.create_task(cartesia_tts_worker(sentence_queue, websocket, interrupt_event, timing_log))
     active_ai_task = None
     was_speaking = False
 
@@ -50,8 +52,10 @@ async def voice_chat(websocket: WebSocket, userId: str):
         try:
             stt_result = await speech_to_text(audio_bytes)
             user_text = stt_result["transcript"]
+            timing_log["stt_ms"] = (time.perf_counter() - timing_log["turn_start"]) * 1000
             if not user_text:
                 return
+            await websocket.send_json({"type": "transcript", "text": user_text})
             await run_ai_response(user_text, userId, websocket, sentence_queue)
         except Exception as e:
             print(f"🧠 Brain Error: {e}")
@@ -110,6 +114,9 @@ async def voice_chat(websocket: WebSocket, userId: str):
                 websocket=websocket,
                 text_chunk_callback=on_text_chunk
             )
+            if result:
+                timing_log["retrieval_ms"] = result.get("retrieval_ms")
+                timing_log["ttfb_ms"] = result.get("ttfb_ms")
             timing_log["text_stream_done"] = time.perf_counter()
             elapsed = (timing_log["text_stream_done"] - timing_log["turn_start"]) * 1000
             print(f"⏱️  Text stream finished: {elapsed:.0f}ms")
@@ -207,6 +214,7 @@ async def voice_chat(websocket: WebSocket, userId: str):
             active_ai_task.cancel()
         await sentence_queue.put(None)
         await tts_task
+        user_histories.pop(userId, None)
         print("🧹 Cleanup complete.")
 
 
@@ -222,7 +230,7 @@ def clean_text_for_tts(text):
     return text
 
 
-async def cartesia_tts_worker(sentence_queue: asyncio.Queue, websocket, interrupt_event: asyncio.Event):
+async def cartesia_tts_worker(sentence_queue: asyncio.Queue, websocket, interrupt_event: asyncio.Event, timing_log: dict):
     ws = await client.tts.websocket()
     while True:
         sentence = await sentence_queue.get()
@@ -257,6 +265,16 @@ async def cartesia_tts_worker(sentence_queue: asyncio.Queue, websocket, interrup
                         timing_log["first_audio_byte"] = time.perf_counter()
                         elapsed = (timing_log["first_audio_byte"] - timing_log.get("turn_start", timing_log["first_audio_byte"])) * 1000
                         print(f"⏱️  First Cartesia audio byte: {elapsed:.0f}ms")
+                        try:
+                            await websocket.send_json({
+                                "type": "timing",
+                                "stt_ms": timing_log.get("stt_ms"),
+                                "retrieval_ms": timing_log.get("retrieval_ms"),
+                                "ttfb_ms": timing_log.get("ttfb_ms"),
+                                "ttfa_ms": elapsed,
+                            })
+                        except Exception:
+                            pass  # client may have disconnected between audio bytes
                     await websocket.send_bytes(output.audio)
         except Exception as e:
             print(f"⚠️ TTS Worker: sentence failed, continuing to next ({e})")

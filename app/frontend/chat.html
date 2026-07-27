@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -24,7 +25,7 @@
         .chat-container {
             background: white;
             border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             width: 100%;
             max-width: 800px;
             height: 90vh;
@@ -84,6 +85,7 @@
                 opacity: 0;
                 transform: translateY(10px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -111,7 +113,7 @@
             background: white;
             color: #333;
             border-bottom-left-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
         .status-message {
@@ -147,10 +149,14 @@
         }
 
         @keyframes typing {
-            0%, 60%, 100% {
+
+            0%,
+            60%,
+            100% {
                 transform: translateY(0);
                 opacity: 0.7;
             }
+
             30% {
                 transform: translateY(-10px);
                 opacity: 1;
@@ -234,6 +240,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="chat-container">
         <div class="chat-header">
@@ -252,12 +259,7 @@
 
         <div class="chat-input-area">
             <div class="input-container">
-                <input 
-                    type="text" 
-                    id="messageInput" 
-                    placeholder="Type your message..." 
-                    disabled
-                />
+                <input type="text" id="messageInput" placeholder="Type your message..." disabled />
                 <button id="sendButton" disabled>Send</button>
             </div>
         </div>
@@ -301,7 +303,7 @@
                 messageInput.disabled = true;
                 sendButton.disabled = true;
                 addStatusMessage('Disconnected from server ❌');
-                
+
                 // Attempt to reconnect after 3 seconds
                 setTimeout(connect, 3000);
             };
@@ -316,7 +318,7 @@
         function handleMessage(message) {
             console.log('Received:', message);
 
-            switch(message.type) {
+            switch (message.type) {
                 case 'status':
                     updateStatus(message.message);
                     break;
@@ -347,7 +349,7 @@
             // Add new status
             const statusDiv = document.createElement('div');
             statusDiv.className = 'status-message active';
-            
+
             if (status.includes('Searching')) {
                 statusDiv.innerHTML = `
                     🔍 ${status}
@@ -387,11 +389,11 @@
                 // Create new message bubble
                 currentMessage = document.createElement('div');
                 currentMessage.className = 'message assistant';
-                
+
                 const content = document.createElement('div');
                 content.className = 'message-content';
                 content.textContent = '';
-                
+
                 currentMessage.appendChild(content);
                 chatMessages.appendChild(currentMessage);
             }
@@ -399,7 +401,7 @@
             // Append chunk
             const content = currentMessage.querySelector('.message-content');
             content.textContent += chunk;
-            
+
             scrollToBottom();
         }
 
@@ -438,11 +440,11 @@
         function addUserMessage(text) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message user';
-            
+
             const content = document.createElement('div');
             content.className = 'message-content';
             content.textContent = text;
-            
+
             messageDiv.appendChild(content);
             chatMessages.appendChild(messageDiv);
             scrollToBottom();
@@ -451,7 +453,7 @@
         // Send message
         function sendMessage() {
             const text = messageInput.value.trim();
-            
+
             if (!text) return;
             if (!ws || ws.readyState !== WebSocket.OPEN) {
                 alert('Not connected to server');
@@ -490,4 +492,5 @@
         connect();
     </script>
 </body>
+
 </html>

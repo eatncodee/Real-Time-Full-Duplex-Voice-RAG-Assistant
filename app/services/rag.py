@@ -132,14 +132,26 @@ def search_documents(question: str) -> str:
             return "\n\n".join(results['documents'][0])
         return "No relevant docs found"
 
-    # Step 2: pull every chunk belonging to that document
+    # Step 2: decide whole-doc vs section-only from metadata alone where
+    # possible, so a large document never pays for a full fetch just to
+    # measure its own size.
+    doc_total_chars = top_meta.get('doc_total_chars')
+    if doc_total_chars is not None and doc_total_chars > SMALL_DOC_CHAR_THRESHOLD and top_section:
+        full_doc = collection.get(where={"$and": [{"source": top_source}, {"section": top_section}]})
+        docs = full_doc.get('documents')
+        metas = full_doc.get('metadatas')
+        if docs and metas:
+            return _reconstruct(docs, metas, section_filter=top_section)
+        # fall through to the whole-document path if the section filter
+        # somehow returned nothing (e.g. stale metadata from an old upload)
+
     full_doc = collection.get(where={"source": top_source})
     docs = full_doc.get('documents')
     metas = full_doc.get('metadatas')
     if not docs or not metas:
         return "No relevant docs found"
 
-    total_chars = sum(len(d) for d in docs)
+    total_chars = doc_total_chars if doc_total_chars is not None else sum(len(d) for d in docs)
     if total_chars <= SMALL_DOC_CHAR_THRESHOLD or not top_section:
         return _reconstruct(docs, metas)
 
@@ -179,6 +191,15 @@ def search_documents_with_confidence(question: str) -> dict:
     if not top_source:
         return {"text": initial['documents'][0][0], "distance": top_distance, "source": None}
 
+    doc_total_chars = top_meta.get('doc_total_chars')
+
+    if doc_total_chars is not None and doc_total_chars > SMALL_DOC_CHAR_THRESHOLD and top_section:
+        full_doc = collection.get(where={"$and": [{"source": top_source}, {"section": top_section}]})
+        docs = full_doc.get('documents')
+        metas = full_doc.get('metadatas')
+        if docs and metas:
+            return {"text": _reconstruct(docs, metas, section_filter=top_section), "distance": top_distance, "source": top_source}
+
     full_doc = collection.get(where={"source": top_source})
     docs = full_doc.get('documents')
     metas = full_doc.get('metadatas')
@@ -186,7 +207,7 @@ def search_documents_with_confidence(question: str) -> dict:
     if not docs or not metas:
         return {"text": "", "distance": top_distance, "source": top_source}
 
-    total_chars = sum(len(d) for d in docs)
+    total_chars = doc_total_chars if doc_total_chars is not None else sum(len(d) for d in docs)
     if total_chars <= SMALL_DOC_CHAR_THRESHOLD or not top_section:
         text = _reconstruct(docs, metas)
     else:
@@ -309,7 +330,7 @@ RULE: Answer directly if it's general knowledge. Only search for specific docume
         import traceback
         print(f"RAG error: {e}")
         traceback.print_exc()
-        error_message = f"I encountered an error: {str(e)}"
+        error_message = "I ran into an internal error processing that — please try again."
 
         conversation_history.append({
             "role": "model",

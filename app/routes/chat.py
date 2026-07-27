@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from app.services.rag import ask_question,chat_with_function_calling
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -22,11 +25,12 @@ class ChatMessage(BaseModel):
 @router.post("/ask")
 async def ask(q: Question):
     try:
-        result = ask_question(q.question, q.n_results)
+        result = await ask_question(q.question, q.n_results)
         return result
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("ask failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
     
 
 @router.post("/chat", response_model=ChatResponse)
@@ -35,5 +39,6 @@ async def chat(msg: ChatMessage):
         result = await chat_with_function_calling(msg.message,msg.conversation_history,msg.temprature)
         return result
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("chat failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
