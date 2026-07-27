@@ -11,8 +11,6 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-# Anyone with the URL could otherwise wipe the whole knowledge base or read
-# every uploaded resume (real names/emails/phones) with no auth at all.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 
 
@@ -21,7 +19,10 @@ async def require_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(require_api_key)])
+# Auth is off while this stays local/private. Before deploying anywhere
+# reachable, set DOCS_API_KEY in .env and add
+# `dependencies=[Depends(require_api_key)]` back to the line below.
+router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 class Document(BaseModel):

@@ -15,10 +15,10 @@ SEARCH_KEYWORDS = [
     "rudraksh", "resume", "experience", "project", "skill", "education",
     "work", "job", "company", "internship", "certification", "achievement",
     "leetcode", "cgpa", "degree", "college", "university", "background",
-    "document", "policy", "skills", "problem solver", "projects", "work experience", 
-    "education background", "problem solving", "programming", "technical skills", 
-    "soft skills", "hackathons", "python", "fastapi", "docker", "mongodb", "git", 
-    "github", "gitlab", "docker", "jenkins", "kubernetes", "aws", "azure", "gcp", "kubernetes"
+    "document", "policy", "problem solver", "work experience",
+    "education background", "problem solving", "programming", "technical skills",
+    "soft skills", "hackathons", "python", "fastapi", "docker", "mongodb", "git",
+    "github", "gitlab", "jenkins", "kubernetes", "aws", "azure", "gcp"
 ]
 
 
