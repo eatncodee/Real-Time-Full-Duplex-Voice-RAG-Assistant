@@ -60,6 +60,8 @@ async def voice_chat(websocket: WebSocket,userId:str):
             if not user_text:
                 return
 
+            await websocket.send_json({"type": "transcript", "text": user_text})
+
             # 2. Background RAG Response
             await run_ai_response(user_text, userId, websocket, sentence_queue)
 
